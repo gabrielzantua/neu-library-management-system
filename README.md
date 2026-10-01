@@ -1,6 +1,6 @@
 # NEU Library Management System
 
-This is the local HTML, CSS, and JavaScript version of our New Era University
+This is the HTML, CSS, and JavaScript version of our New Era University
 library interface. It follows the four assignment modules:
 
 1. **Books Entry:** record books received by the library.
