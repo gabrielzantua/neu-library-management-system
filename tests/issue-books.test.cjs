@@ -106,3 +106,34 @@ test("changing to a student without a loan restores confirmation", () => {
   assert.doesNotMatch(app.innerHTML, /Borrowing unavailable|type="submit"[^>]*disabled/);
   assert.match(app.innerHTML, /Ready to hand over/);
 });
+
+test("student choices show borrowing status and selected student shows loan details", () => {
+  const { app, state, render } = loadApp();
+  assert.equal((app.innerHTML.match(/>Book borrowed</g) || []).length, 2);
+  assert.equal((app.innerHTML.match(/>No active loan</g) || []).length, 1);
+  for (const loan of state.issuedBooks) {
+    state.selectedUserId = loan.userId;
+    render();
+    const book = state.books.find((book) => book.id === loan.bookId);
+    assert.ok(app.innerHTML.includes(`Currently borrowed: ${book.title}`));
+    assert.match(app.innerHTML, /Issued: .* · Due: /);
+    assert.match(app.innerHTML, /Return this book before borrowing another/);
+  }
+  state.selectedUserId = state.users.find((user) => !state.issuedBooks.some((loan) => loan.userId === user.id)).id;
+  render();
+  assert.doesNotMatch(app.innerHTML, /Currently borrowed:/);
+  assert.match(app.innerHTML, /This student can borrow an available book/);
+});
+
+test("new borrowing is visible immediately after issuing", () => {
+  const { app, state, render, submit } = loadApp();
+  const user = state.users.find((user) => !state.issuedBooks.some((loan) => loan.userId === user.id));
+  const book = state.books.find((book) => book.available > 0);
+  state.selectedUserId = user.id;
+  state.selectedBookId = book.id;
+  submit();
+  assert.equal((app.innerHTML.match(/>Book borrowed</g) || []).length, 3);
+  state.selectedUserId = user.id;
+  render();
+  assert.ok(app.innerHTML.includes(`Currently borrowed: ${book.title}`));
+});
