@@ -1,10 +1,12 @@
 # NEU Library Management System
 
 This is the HTML, CSS, and JavaScript version of our New Era University
-library interface. It follows the four assignment modules:
+library interface. It includes these assignment modules:
 
 1. **Books Entry:** record books received by the library.
 2. **User Entry:** record student details.
+3. **Issue Books:** select a registered student and an available book, set issue
+   and due dates, and confirm the issue. Return Books is not available.
 
 ## Run locally
 

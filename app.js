@@ -121,7 +121,7 @@ const seedIssuedBooks = [
 ];
 
 function initialView(value) {
-  return value === "users" ? "users" : "books";
+  return ["users", "issue"].includes(value) ? value : "books";
 }
 
 const state = {
@@ -153,6 +153,7 @@ function renderSidebar() {
   const items = [
     ["books", "Books Entry", "book"],
     ["users", "User Entry", "users"],
+    ["issue", "Issue Books", "issue"],
   ];
   return `<aside class="library-sidebar ${state.mobileOpen ? "sidebar-open" : ""}">
     <div class="brand-lockup"><div class="brand-mark"><img src="assets/neu-logo.png" alt="New Era University" width="42" height="42"></div><div><strong>NEU Library</strong><span>Management system</span></div><button type="button" class="mobile-close" aria-label="Close navigation">${icon("x", 18)}</button></div>
@@ -231,7 +232,7 @@ function renderToast() {
 }
 
 function render() {
-  const views = { books: renderBooksView, users: renderUsersView };
+  const views = { books: renderBooksView, users: renderUsersView, issue: renderIssueView };
   app.innerHTML = `<main class="library-app">${renderSidebar()}<section class="library-main">${renderTopbar()}<div class="library-content">${views[state.activeView]()}</div><footer class="library-footer"><span>NEU LIBRARY MANAGEMENT SYSTEM</span><span>New Era University · Quezon City · 2026</span></footer></section>${renderToast()}${renderModal()}</main>`;
 }
 
@@ -349,12 +350,8 @@ app.addEventListener("submit", (event) => {
     const issuedBook = { id: `IR-${414 + state.issuedBooks.length}`, bookId: book.id, userId: user.id, issuedAt: state.issueDate, dueAt: state.dueDate };
     state.issuedBooks.unshift(issuedBook);
     state.books = state.books.map((item) => item.id === book.id ? { ...item, available: item.available - 1, status: "Issued" } : item);
-    state.activeView = "return";
-    state.selectedIssuedId = "";
-    const url = new URL(window.location.href);
-    url.searchParams.set("view", "return");
-    window.history.pushState(null, "", url);
-    render();
+    state.selectedUserId = "";
+    state.selectedBookId = "";
     notify(`${book.title} issued to ${user.name}.`);
     return;
   }
