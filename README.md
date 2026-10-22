@@ -6,7 +6,9 @@ library interface. It includes these assignment modules:
 1. **Books Entry:** record books received by the library.
 2. **User Entry:** record student details.
 3. **Issue Books:** select a registered student and an available book, set issue
-   and due dates, and confirm the issue. Return Books is not available.
+   and due dates, and confirm the issue. Each student may have only one active
+   loan, including loans already shown in the sample data. Return Books is not
+   available. Loan restrictions reset with the rest of the data on refresh.
 
 ## Run locally
 

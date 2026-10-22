@@ -12,9 +12,9 @@ function loadApp(view = "issue") {
     addEventListener() {}, scrollTo() {}, clearTimeout() {}, setTimeout() {},
   };
   const context = { document: { querySelector: () => app }, window, URL, URLSearchParams, FormData: class {} };
-  runInNewContext(`${readFileSync(require.resolve("../app.js"), "utf8")}\nglobalThis.appState = state; globalThis.navigate = setView;`, context);
+  runInNewContext(`${readFileSync(require.resolve("../app.js"), "utf8")}\nglobalThis.appState = state; globalThis.navigate = setView; globalThis.renderApp = render;`, context);
   return {
-    app, state: context.appState, navigate: context.navigate,
+    app, state: context.appState, navigate: context.navigate, render: context.renderApp,
     submit: () => handlers.submit({ preventDefault() {}, target: { getAttribute: () => "issue-form" } }),
   };
 }
@@ -35,7 +35,7 @@ test("issuing updates inventory, confirms success, and prepares another issue", 
   const { app, state, submit } = loadApp();
   const book = state.books.find((item) => item.available === 1);
   const count = state.issuedBooks.length;
-  state.selectedUserId = state.users[0].id;
+  state.selectedUserId = state.users.find((user) => !state.issuedBooks.some((loan) => loan.userId === user.id)).id;
   state.selectedBookId = book.id;
   submit();
   assert.equal(state.issuedBooks.length, count + 1);
@@ -54,7 +54,7 @@ test("incomplete selections, unavailable books, and reversed dates cannot issue"
   const { state, submit } = loadApp();
   const count = state.issuedBooks.length;
   submit();
-  state.selectedUserId = state.users[0].id;
+  state.selectedUserId = state.users.find((user) => !state.issuedBooks.some((loan) => loan.userId === user.id)).id;
   state.selectedBookId = state.books.find((item) => item.available === 0).id;
   submit();
   state.selectedBookId = state.books.find((item) => item.available > 0).id;
@@ -62,4 +62,47 @@ test("incomplete selections, unavailable books, and reversed dates cannot issue"
   state.dueDate = "2026-10-21";
   submit();
   assert.equal(state.issuedBooks.length, count);
+});
+
+for (const sameBook of [true, false]) {
+  test(`student with an active loan cannot borrow ${sameBook ? "the same" : "another"} book`, () => {
+    const { app, state, render, submit } = loadApp();
+    const loan = state.issuedBooks.find((item) => state.books.find((book) => book.id === item.bookId).available > 0);
+    state.selectedUserId = loan.userId;
+    state.selectedBookId = state.books.find((book) => book.available > 0 && (sameBook ? book.id === loan.bookId : book.id !== loan.bookId)).id;
+    const before = JSON.stringify({ books: state.books, loans: state.issuedBooks });
+    render();
+    assert.match(app.innerHTML, /Borrowing unavailable/);
+    assert.match(app.innerHTML, /type="submit"[^>]*disabled/);
+    submit();
+    assert.equal(JSON.stringify({ books: state.books, loans: state.issuedBooks }), before);
+    assert.match(app.innerHTML, /Return your borrowed book before borrowing another/);
+    assert.match(app.innerHTML, /Borrowing unavailable/);
+    assert.match(app.innerHTML, /type="submit"[^>]*disabled/);
+  });
+}
+
+test("a successful issue blocks another loan for that student in this session", () => {
+  const { state, submit } = loadApp();
+  const user = state.users.find((user) => !state.issuedBooks.some((loan) => loan.userId === user.id));
+  state.selectedUserId = user.id;
+  state.selectedBookId = state.books.find((book) => book.available > 1).id;
+  submit();
+  const count = state.issuedBooks.length;
+  state.selectedUserId = user.id;
+  state.selectedBookId = state.books.find((book) => book.available > 0).id;
+  submit();
+  assert.equal(state.issuedBooks.length, count);
+});
+
+test("changing to a student without a loan restores confirmation", () => {
+  const { app, state, render } = loadApp();
+  state.selectedBookId = state.books.find((book) => book.available > 0).id;
+  state.selectedUserId = state.issuedBooks[0].userId;
+  render();
+  assert.match(app.innerHTML, /Borrowing unavailable/);
+  state.selectedUserId = state.users.find((user) => !state.issuedBooks.some((loan) => loan.userId === user.id)).id;
+  render();
+  assert.doesNotMatch(app.innerHTML, /Borrowing unavailable|type="submit"[^>]*disabled/);
+  assert.match(app.innerHTML, /Ready to hand over/);
 });
