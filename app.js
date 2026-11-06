@@ -72,11 +72,29 @@ function dateLabel(value) {
   return new Intl.DateTimeFormat("en-PH", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }).format(new Date(`${value}T12:00:00`));
 }
 
+function calendarDayNumber(value) {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value) || value.startsWith("0000")) return null;
+  const date = new Date(`${value}T00:00:00Z`);
+  if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== value) return null;
+  return date.getTime() / 86_400_000;
+}
+
 function lateDays(dueDate, returnDate) {
-  const due = new Date(`${dueDate}T12:00:00`);
-  const returned = new Date(`${returnDate}T12:00:00`);
-  if (Number.isNaN(due.getTime()) || Number.isNaN(returned.getTime())) return 0;
-  return Math.max(0, Math.floor((returned.getTime() - due.getTime()) / 86_400_000));
+  const due = calendarDayNumber(dueDate);
+  const returned = calendarDayNumber(returnDate);
+  if (due === null || returned === null) return 0;
+  return Math.max(0, returned - due);
+}
+
+function returnDateError(loan, value) {
+  const returned = calendarDayNumber(value);
+  if (returned === null) return "Enter a valid return date.";
+  const issued = calendarDayNumber(loan.issuedAt);
+  const due = calendarDayNumber(loan.dueAt);
+  if (issued === null || due === null || due < issued) return "The loan has invalid dates. Return not processed.";
+  if (returned < issued) return "Return date cannot be before the issue date.";
+  if (returned > calendarDayNumber(dateInputValue())) return "Return date cannot be in the future.";
+  return "";
 }
 
 function peso(value) {
@@ -123,6 +141,9 @@ const seedIssuedBooks = [
   { id: "IR-00414", bookId: "BK-1182", userId: "22-40719-582", issuedAt: sampleIssueDate, dueAt: addDays(sampleIssueDate, 14) },
 ];
 
+// Returned loan IDs remain unique for the lifetime of the in-memory records.
+let nextIssuedNumber = Math.max(...seedIssuedBooks.map((loan) => Number(loan.id.slice(3)))) + 1;
+
 function initialView(value) {
   return ["users", "issue", "return"].includes(value) ? value : "books";
 }
@@ -137,6 +158,7 @@ const state = {
   books: seedBooks.map((book) => ({ ...book })),
   users: seedUsers.map((user) => ({ ...user })),
   issuedBooks: seedIssuedBooks.map((issuedBook) => ({ ...issuedBook })),
+  returnRecords: [],
   bookSearch: "",
   userSearch: "",
   globalSearchQuery: "",
@@ -302,7 +324,7 @@ function renderIssueView() {
 function renderReturnView() {
   const today = dateInputValue();
   const selected = state.issuedBooks.find((issuedBook) => issuedBook.id === state.selectedIssuedId);
-  const rows = state.issuedBooks.map((issuedBook) => {
+  const rows = [...state.issuedBooks].sort((a, b) => a.dueAt.localeCompare(b.dueAt)).map((issuedBook) => {
     const book = state.books.find((item) => item.id === issuedBook.bookId);
     const user = state.users.find((item) => item.id === issuedBook.userId);
     const overdue = lateDays(issuedBook.dueAt, today) > 0;
@@ -312,8 +334,9 @@ function renderReturnView() {
   if (selected) {
     const book = state.books.find((item) => item.id === selected.bookId);
     const user = state.users.find((item) => item.id === selected.userId);
-    const fine = lateDays(selected.dueAt, state.returnDate) * 15;
-    summary = `<form id="return-form" class="paper-card return-summary"><div class="receipt-top"><span class="receipt-seal">${icon("receipt", 21)}</span><div><p class="eyebrow">RETURN RECEIPT</p><h2>Review and close</h2></div><button type="button" class="return-receipt-close" aria-label="Close return receipt">${icon("x", 16)}</button></div><div class="receipt-rule"></div><div class="receipt-person"><div class="avatar avatar-small">${escapeHtml(initials(user?.name ?? ""))}</div><div><strong>${escapeHtml(user?.name ?? "Student")}</strong><span>${escapeHtml(user?.id ?? "")}</span></div></div><div class="receipt-line"><span>Book</span><strong>${escapeHtml(book?.title ?? "Book")}</strong></div><div class="receipt-line"><span>Due date</span><strong>${escapeHtml(dateLabel(selected.dueAt))}</strong></div><div class="receipt-line receipt-field"><label for="return-date">Return date</label><input id="return-date" type="date" value="${escapeHtml(state.returnDate)}" required></div><div class="fine-box ${fine ? "fine-due" : "fine-clear"}"><div><span>${fine ? "Fine due" : "No fine due"}</span><strong>${peso(fine)}</strong></div>${icon("dollar", 23)}</div>${button(fine ? "Return & record fine" : "Confirm return", "button-primary", "check", "submit")}</form>`;
+    const dateError = returnDateError(selected, state.returnDate);
+    const fine = dateError ? null : lateDays(selected.dueAt, state.returnDate) * 15;
+    summary = `<form id="return-form" class="paper-card return-summary"><div class="receipt-top"><span class="receipt-seal">${icon("receipt", 21)}</span><div><p class="eyebrow">RETURN RECEIPT</p><h2>Review and close</h2></div><button type="button" class="return-receipt-close" aria-label="Close return receipt">${icon("x", 16)}</button></div><div class="receipt-rule"></div><div class="receipt-person"><div class="avatar avatar-small">${escapeHtml(initials(user?.name ?? ""))}</div><div><strong>${escapeHtml(user?.name ?? "Student")}</strong><span>${escapeHtml(user?.id ?? "")}</span></div></div><div class="receipt-line"><span>Book</span><strong>${escapeHtml(book?.title ?? "Book")}</strong></div><div class="receipt-line"><span>Due date</span><strong>${escapeHtml(dateLabel(selected.dueAt))}</strong></div><div class="receipt-line receipt-field"><label for="return-date">Return date</label><input id="return-date" type="date" value="${escapeHtml(state.returnDate)}" min="${escapeHtml(selected.issuedAt)}" max="${today}" required></div><div class="fine-box ${fine ? "fine-due" : "fine-clear"}"${dateError ? ' role="alert"' : ""}><div><span>${escapeHtml(dateError || (fine ? "Fine due" : "No fine due"))}</span><strong>${fine === null ? "—" : peso(fine)}</strong></div>${icon("dollar", 23)}</div>${button(fine ? "Return & record fine" : "Confirm return", "button-primary", "check", "submit", Boolean(dateError))}</form>`;
   }
   return `<div class="view-stack">${sectionHeading("MODULE 04 / RETURN OF BOOKS", "Return a book", "Record the return date, restore availability, and calculate any fine for delayed return.", `<div class="desk-counter"><span class="status-dot"></span>${state.issuedBooks.length} books to be returned</div>`)}<div class="return-layout"><section class="paper-card table-card issued-book-table"><div class="table-label"><span>BOOKS TO BE RETURNED</span><span>Sorted by due date</span></div><div class="issued-book-list">${rows || emptyState("return", "No books to be returned", "All issued books have been returned.")}</div></section>${summary}</div></div>`;
 }
@@ -519,7 +542,7 @@ app.addEventListener("submit", (event) => {
       notify("Return your borrowed book before borrowing another.");
       return;
     }
-    const issuedBook = { id: `IR-${414 + state.issuedBooks.length}`, bookId: book.id, userId: user.id, issuedAt: state.issueDate, dueAt: state.dueDate };
+    const issuedBook = { id: `IR-${String(nextIssuedNumber++).padStart(5, "0")}`, bookId: book.id, userId: user.id, issuedAt: state.issueDate, dueAt: state.dueDate };
     state.issuedBooks.unshift(issuedBook);
     state.books = state.books.map((item) => item.id === book.id ? { ...item, available: item.available - 1, status: "Issued" } : item);
     state.selectedUserId = "";
@@ -529,15 +552,33 @@ app.addEventListener("submit", (event) => {
   }
   if (formId === "return-form") {
     const issuedBook = state.issuedBooks.find((item) => item.id === state.selectedIssuedId);
-    if (!issuedBook || !state.returnDate) return;
+    if (!issuedBook || state.returnRecords.some((record) => record.loanId === issuedBook.id)) {
+      notify("This loan is no longer active or has already been returned.");
+      return;
+    }
+    const dateError = returnDateError(issuedBook, state.returnDate);
+    if (dateError) { notify(dateError); return; }
     const book = state.books.find((item) => item.id === issuedBook.bookId);
+    if (!book || !state.users.some((user) => user.id === issuedBook.userId)
+      || !Number.isInteger(book.available) || !Number.isInteger(book.total)
+      || book.available < 0 || book.available >= book.total) {
+      notify("Cannot process return: the loan or stock record is inconsistent.");
+      return;
+    }
     const delayedDays = lateDays(issuedBook.dueAt, state.returnDate);
-    state.issuedBooks = state.issuedBooks.filter((item) => item.id !== issuedBook.id);
-    state.books = state.books.map((item) => {
+    const returnRecord = {
+      loanId: issuedBook.id, studentId: issuedBook.userId, bookId: issuedBook.bookId,
+      dueDate: issuedBook.dueAt, returnDate: state.returnDate,
+      overdueDays: delayedDays, fineAmount: delayedDays * 15,
+    };
+    const updatedBooks = state.books.map((item) => {
       if (item.id !== issuedBook.bookId) return item;
-      const available = Math.min(item.total, item.available + 1);
+      const available = item.available + 1;
       return { ...item, available, status: available >= item.total ? "Available" : "Issued" };
     });
+    state.returnRecords.push(returnRecord);
+    state.issuedBooks = state.issuedBooks.filter((item) => item.id !== issuedBook.id);
+    state.books = updatedBooks;
     state.selectedIssuedId = "";
     notify(`${book?.title ?? "Book"} returned on ${dateLabel(state.returnDate)}. ${delayedDays ? `Fine recorded: ${peso(delayedDays * 15)}.` : "No fine due."}`);
   }

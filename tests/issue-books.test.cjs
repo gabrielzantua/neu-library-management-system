@@ -30,7 +30,11 @@ function loadApp(view = "issue", authenticated = true) {
     addEventListener() {}, scrollTo() {}, clearTimeout() {}, setTimeout() {},
   };
   class FormDataStub { constructor(form) { this.values = form.values || {}; } get(name) { return this.values[name] ?? null; } }
-  const context = { document: { querySelector: () => app }, window, URL, URLSearchParams, FormData: FormDataStub, Element: ElementStub };
+  class FixedDate extends Date {
+    constructor(...args) { super(...(args.length ? args : ["2026-11-06T12:00:00Z"])); }
+    static now() { return Date.parse("2026-11-06T12:00:00Z"); }
+  }
+  const context = { Date: FixedDate, document: { querySelector: () => app }, window, URL, URLSearchParams, FormData: FormDataStub, Element: ElementStub };
   runInNewContext(`${readFileSync(require.resolve("../app.js"), "utf8")}\nglobalThis.appState = state; globalThis.navigate = setView; globalThis.renderApp = render; globalThis.searchLibraryForTests = typeof searchLibrary === "function" ? searchLibrary : null;`, context);
   return {
     app, state: context.appState, navigate: context.navigate, render: context.renderApp,
@@ -249,4 +253,212 @@ test("new borrowing is visible immediately after issuing", () => {
   state.selectedUserId = user.id;
   render();
   assert.ok(app.innerHTML.includes(`Currently borrowed: ${book.title}`));
+});
+
+function librarySnapshot(state) {
+  return JSON.stringify({ books: state.books, loans: state.issuedBooks, returns: state.returnRecords });
+}
+
+test("empty Return Books page shows the empty list and default receipt prompt", () => {
+  const { app, state, render } = loadApp("return");
+  state.issuedBooks = [];
+  render();
+  assert.match(app.innerHTML, /No books to be returned/);
+  assert.match(app.innerHTML, /Select a book to return/);
+  assert.doesNotMatch(app.innerHTML, /data-issued-id=|id="return-form"/);
+});
+
+test("selecting and closing a receipt changes no loans, stock, dates, or return records", () => {
+  const { app, state, click } = loadApp("return");
+  const loan = state.issuedBooks[0];
+  const before = librarySnapshot(state);
+  click(".issued-book-row", { issuedId: loan.id });
+  assert.equal(state.selectedIssuedId, loan.id);
+  assert.match(app.innerHTML, /RETURN RECEIPT/);
+  state.returnDate = "2026-08-24";
+  click(".return-receipt-close");
+  assert.equal(state.selectedIssuedId, "");
+  assert.equal(state.returnDate, "2026-08-24");
+  assert.equal(librarySnapshot(state), before);
+  assert.deepEqual(Array.from(state.returnRecords), []);
+  assert.match(app.innerHTML, /Select a book to return/);
+});
+
+for (const [returnDate, overdueDays, fineAmount] of [["2026-08-23", 0, 0], ["2026-08-24", 0, 0], ["2026-08-28", 4, 60]]) {
+  test(`return on ${returnDate} previews and saves PHP ${fineAmount}, restoring exactly one copy`, () => {
+    const { app, state, click, render, submit, search } = loadApp("return");
+    const loan = state.issuedBooks[0];
+    const book = state.books.find((item) => item.id === loan.bookId);
+    const count = state.issuedBooks.length;
+    const available = book.available;
+    click(".issued-book-row", { issuedId: loan.id });
+    state.returnDate = returnDate;
+    render();
+    assert.ok(app.innerHTML.includes(`₱${fineAmount}`));
+    submit("return-form");
+    assert.equal(state.issuedBooks.length, count - 1);
+    assert.equal(state.issuedBooks.some((item) => item.id === loan.id), false);
+    assert.equal(state.books.find((item) => item.id === book.id).available, available + 1);
+    assert.equal(state.books.find((item) => item.id === book.id).status, "Available");
+    assert.equal(state.returnRecords.length, 1);
+    assert.deepEqual(JSON.parse(JSON.stringify(state.returnRecords[0])), {
+      loanId: loan.id, studentId: loan.userId, bookId: loan.bookId,
+      dueDate: loan.dueAt, returnDate, overdueDays, fineAmount,
+    });
+    assert.equal(state.selectedIssuedId, "");
+    assert.match(app.innerHTML, /Select a book to return/);
+    assert.match(state.toast, /returned on/);
+    assert.ok(state.toast.includes(fineAmount ? `₱${fineAmount}` : "No fine due"));
+    assert.equal(search(loan.id).some((entry) => entry.kind === "loan"), false);
+  });
+}
+
+for (const returnDate of ["", " ", null, 123, "not-a-date", "2026-02-30", "2026-13-01", "2026-08-19", "2026-11-07", "2026-8-24", "2026-08-24T12:00:00Z"]) {
+  test(`invalid return date ${JSON.stringify(returnDate)} cannot change library records`, () => {
+    const { app, state, click, render, submit } = loadApp("return");
+    click(".issued-book-row", { issuedId: state.issuedBooks[0].id });
+    state.returnDate = returnDate;
+    const before = librarySnapshot(state);
+    render();
+    assert.match(app.innerHTML, /type="submit"[^>]*disabled/);
+    assert.match(app.innerHTML, /role="alert"/);
+    submit("return-form");
+    assert.equal(librarySnapshot(state), before);
+    assert.match(state.toast, /date/i);
+    assert.notEqual(state.selectedIssuedId, "");
+  });
+}
+
+test("returning one of several copies preserves the remaining issued status", () => {
+  const { state, submit } = loadApp("return");
+  const loan = state.issuedBooks.find((item) => item.bookId === "BK-1048");
+  const book = state.books.find((item) => item.id === loan.bookId);
+  book.available = 1;
+  state.selectedIssuedId = loan.id;
+  state.returnDate = "2026-09-01";
+  submit("return-form");
+  assert.equal(state.books.find((item) => item.id === loan.bookId).available, 2);
+  assert.equal(state.books.find((item) => item.id === loan.bookId).status, "Issued");
+});
+
+for (const problem of ["missing book", "missing student", "full stock"]) {
+  test(`return rejects ${problem} without partial changes`, () => {
+    const { state, submit } = loadApp("return");
+    const loan = state.issuedBooks[0];
+    state.selectedIssuedId = loan.id;
+    state.returnDate = "2026-08-24";
+    if (problem === "missing book") state.books = state.books.filter((item) => item.id !== loan.bookId);
+    if (problem === "missing student") state.users = state.users.filter((item) => item.id !== loan.userId);
+    if (problem === "full stock") state.books.find((item) => item.id === loan.bookId).available = 1;
+    const before = librarySnapshot(state);
+    submit("return-form");
+    assert.equal(librarySnapshot(state), before);
+    assert.match(state.toast, /inconsistent/);
+  });
+}
+
+test("repeated submissions and stale returned loan IDs cannot process another return", () => {
+  const { state, submit } = loadApp("return");
+  const loan = state.issuedBooks[0];
+  state.selectedIssuedId = loan.id;
+  state.returnDate = "2026-08-24";
+  submit("return-form");
+  const after = librarySnapshot(state);
+  submit("return-form");
+  state.selectedIssuedId = loan.id;
+  submit("return-form");
+  assert.equal(librarySnapshot(state), after);
+  assert.equal(state.returnRecords.length, 1);
+  assert.match(state.toast, /already been returned|no longer active/);
+  // Even a stale active entry must not replay an already recorded loan ID.
+  state.issuedBooks.push(loan);
+  const stale = librarySnapshot(state);
+  submit("return-form");
+  assert.equal(librarySnapshot(state), stale);
+});
+
+for (const [dueAt, returnDate] of [["2024-02-28", "2024-03-01"], ["2026-03-07", "2026-03-09"]]) {
+  test(`fine counts calendar days from ${dueAt} to ${returnDate}`, () => {
+    const { state, submit } = loadApp("return");
+    const loan = state.issuedBooks[0];
+    loan.issuedAt = dueAt;
+    loan.dueAt = dueAt;
+    state.selectedIssuedId = loan.id;
+    state.returnDate = returnDate;
+    submit("return-form");
+    assert.equal(state.returnRecords[0].overdueDays, 2);
+    assert.equal(state.returnRecords[0].fineAmount, 30);
+  });
+}
+
+test("return records reset with a fresh page and are not stored in session storage", () => {
+  const { state, submit, sessionStorage } = loadApp("return");
+  state.selectedIssuedId = state.issuedBooks[0].id;
+  state.returnDate = "2026-08-24";
+  submit("return-form");
+  assert.equal(state.returnRecords.length, 1);
+  assert.equal(sessionStorage.getItem("returnRecords"), null);
+  const fresh = loadApp("return");
+  assert.equal(fresh.state.returnRecords.length, 0);
+  assert.equal(fresh.state.issuedBooks.length, 3);
+});
+
+test("reissuing after returns uses unique loan IDs and keeps other modules synchronized", () => {
+  const { state, submit, navigate, app } = loadApp("return");
+  const original = state.issuedBooks[0];
+  const ids = new Set();
+  for (let i = 0; i < 5; i++) {
+    const loan = state.issuedBooks.find((item) => item.userId === original.userId);
+    assert.equal(ids.has(loan.id), false);
+    ids.add(loan.id);
+    state.selectedIssuedId = loan.id;
+    state.returnDate = "2026-11-06";
+    submit("return-form");
+    navigate("books");
+    assert.equal(state.books.find((book) => book.id === original.bookId).available, 1);
+    navigate("issue");
+    state.selectedUserId = original.userId;
+    state.selectedBookId = original.bookId;
+    submit("issue-form");
+    assert.match(state.toast, /issued to/);
+    navigate("return");
+    assert.match(app.innerHTML, /data-issued-id=/);
+  }
+  assert.equal(state.returnRecords.length, 5);
+  assert.equal(new Set(state.issuedBooks.map((loan) => loan.id)).size, state.issuedBooks.length);
+});
+
+test("Return Books actually lists active loans in due-date order", () => {
+  const { app, state, render } = loadApp("return");
+  state.issuedBooks.reverse();
+  render();
+  const ids = [...app.innerHTML.matchAll(/data-issued-id="([^"]+)"/g)].map((match) => match[1]);
+  assert.deepEqual(ids, ["IR-00412", "IR-00413", "IR-00414"]);
+});
+
+test("book and student entry still work alongside return records", () => {
+  const { state, submit, navigate, app } = loadApp("books");
+  submit("book-form", { title: "Test Book", author: "Test Author", isbn: "test-isbn", copies: "2" });
+  assert.equal(state.books[0].title, "Test Book");
+  assert.equal(state.books[0].available, 2);
+  navigate("users");
+  submit("user-form", { id: "24-12345-678", name: "Test Student", email: "student@example.test" });
+  assert.equal(state.users[0].id, "24-12345-678");
+  assert.match(app.innerHTML, /Test Student/);
+  assert.equal(state.returnRecords.length, 0);
+});
+
+test("returning the final active loan displays the empty state and keeps all return records", () => {
+  const { app, state, submit } = loadApp("return");
+  const count = state.issuedBooks.length;
+  for (const loan of [...state.issuedBooks]) {
+    state.selectedIssuedId = loan.id;
+    state.returnDate = "2026-11-06";
+    submit("return-form");
+  }
+  assert.equal(state.issuedBooks.length, 0);
+  assert.equal(state.returnRecords.length, count);
+  assert.match(app.innerHTML, /No books to be returned/);
+  assert.match(app.innerHTML, /Select a book to return/);
+  assert.doesNotMatch(app.innerHTML, /id="return-form"/);
 });
