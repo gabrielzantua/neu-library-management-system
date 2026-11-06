@@ -7,8 +7,18 @@ library interface. It includes these assignment modules:
 2. **User Entry:** record student details.
 3. **Issue Books:** select a registered student and an available book, set issue
    and due dates, and confirm the issue. Each student may have only one active
-   loan, including loans already shown in the sample data. Return Books is not
-   available. Loan restrictions reset with the rest of the data on refresh.
+   loan, including loans already shown in the sample data. Unavailable books
+   show their next return due date.
+4. **Return Books:** select an issued book, record its return date, restore
+   availability, and calculate any fine for a late return.
+
+Library records are held in memory and reset on refresh. The demo sign-in lasts
+for the current tab session.
+
+## Demo sign-in
+
+Use the account shown on the sign-in page. This front-end-only demo check is not
+real access control and must not be used to protect real accounts or data.
 
 ## Run locally
 

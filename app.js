@@ -106,31 +106,40 @@ const seedBooks = [
   { id: "BK-1073", isbn: "978-9715081227", title: "Florante at Laura", author: "Francisco Balagtas", category: "Literature", shelf: "B-11", available: 3, total: 3, status: "Available" },
   { id: "BK-1110", isbn: "978-1449373320", title: "Designing Data-Intensive Applications", author: "Martin Kleppmann", category: "Technology", shelf: "A-09", available: 0, total: 1, status: "Issued" },
   { id: "BK-1156", isbn: "978-1032211261", title: "Research Methods for Students", author: "John Biggam", category: "Research", shelf: "C-02", available: 2, total: 2, status: "Available" },
-  { id: "BK-1182", isbn: "978-0199535569", title: "The Odyssey", author: "Homer", category: "Literature", shelf: "B-02", available: 1, total: 1, status: "Available" },
+  { id: "BK-1182", isbn: "978-0199535569", title: "The Odyssey", author: "Homer", category: "Literature", shelf: "B-02", available: 0, total: 1, status: "Issued" },
 ];
 
 const seedUsers = [
   { id: "21-31426-708", name: "Alyssa Reyes", email: "alyssa.reyes@neu.edu.ph", department: "College of Computer Studies" },
   { id: "22-20814-365", name: "Daniel Villanueva", email: "daniel.villanueva@neu.edu.ph", department: "College of Nursing" },
+  { id: "23-50114-286", name: "Rafael Santos", email: "rafael.santos@neu-library.test", department: "College of Computer Studies" },
   { id: "22-40719-582", name: "Camille Soriano", email: "camille.soriano@neu.edu.ph", department: "College of Arts and Sciences" },
 ];
 
+const sampleIssueDate = dateInputValue();
 const seedIssuedBooks = [
   { id: "IR-00412", bookId: "BK-1110", userId: "21-31426-708", issuedAt: "2026-08-20", dueAt: "2026-08-24" },
   { id: "IR-00413", bookId: "BK-1048", userId: "22-20814-365", issuedAt: "2026-08-25", dueAt: "2026-09-01" },
+  { id: "IR-00414", bookId: "BK-1182", userId: "22-40719-582", issuedAt: sampleIssueDate, dueAt: addDays(sampleIssueDate, 14) },
 ];
 
 function initialView(value) {
-  return ["users", "issue"].includes(value) ? value : "books";
+  return ["users", "issue", "return"].includes(value) ? value : "books";
 }
+
+const demoSessionKey = "neu-library-demo-session";
+const demoAccount = { id: "anna-lim", email: "librarian@neu-library.test", password: "library-demo" };
 
 const state = {
   activeView: initialView(new URLSearchParams(window.location.search).get("view")),
+  authenticated: window.sessionStorage.getItem(demoSessionKey) === demoAccount.id,
+  loginError: "",
   books: seedBooks.map((book) => ({ ...book })),
   users: seedUsers.map((user) => ({ ...user })),
   issuedBooks: seedIssuedBooks.map((issuedBook) => ({ ...issuedBook })),
   bookSearch: "",
   userSearch: "",
+  globalSearchQuery: "",
   bookFilter: "All",
   filtersOpen: false,
   issueUserQuery: "",
@@ -141,32 +150,108 @@ const state = {
   dueDate: addDays(dateInputValue(), 14),
   selectedIssuedId: "",
   returnDate: dateInputValue(),
+  accountMenuOpen: "",
   modal: "",
   toast: "",
 };
 
+function normalizeSearchText(value) {
+  return String(value ?? "").normalize("NFKD").replace(/\p{M}/gu, "").toLocaleLowerCase("en-PH").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+}
+
+function searchScore(tokens, fields) {
+  const normalizedFields = fields.map(normalizeSearchText).filter(Boolean);
+  const tokenScores = tokens.map((token) => Math.max(0, ...normalizedFields.map((field) => {
+    if (field === token) return 100;
+    if (field.startsWith(token)) return 70;
+    if (field.split(" ").some((word) => word.startsWith(token))) return 50;
+    return field.includes(token) ? 25 : 0;
+  })));
+  if (tokenScores.some((score) => !score)) return 0;
+  const phrase = tokens.join(" ");
+  return tokenScores.reduce((total, score) => total + score, 0)
+    + (normalizedFields.includes(phrase) ? 120 : normalizedFields.some((field) => field.includes(phrase)) ? 60 : 0);
+}
+
+function searchLibrary(query) {
+  const tokens = normalizeSearchText(query).split(/\s+/).filter(Boolean);
+  if (!tokens.length) return [];
+  const entries = [
+    ...state.books.map((book) => ({ kind: "book", title: book.title, detail: `${book.author} · ${book.id}`, view: "books", record: book, fields: [book.title, book.author, book.isbn, book.category, book.shelf, book.id, book.status] })),
+    ...state.users.map((user) => ({ kind: "user", title: user.name, detail: `${user.id} · ${user.department}`, view: "users", record: user, fields: [user.name, user.id, user.email, user.department] })),
+    ...state.issuedBooks.map((loan) => {
+      const book = state.books.find((item) => item.id === loan.bookId);
+      const user = state.users.find((item) => item.id === loan.userId);
+      return { kind: "loan", title: book?.title ?? loan.id, detail: `${user?.name ?? "Student"} · Due ${dateLabel(loan.dueAt)}`, view: "return", record: loan, fields: [loan.id, loan.issuedAt, loan.dueAt, book?.title, book?.author, book?.isbn, user?.id, user?.name, user?.email, user?.department] };
+    }),
+    { kind: "module", title: "Books Entry", detail: "Browse the catalogue", view: "books", fields: ["Books Entry", "books", "catalogue"] },
+    { kind: "module", title: "User Entry", detail: "Browse student records", view: "users", fields: ["User Entry", "students", "users"] },
+    { kind: "module", title: "Issue Books", detail: "Issue an available book", view: "issue", fields: ["Issue Books", "borrowing", "issue"] },
+    { kind: "module", title: "Return Books", detail: "Review active loans and due dates", view: "return", fields: ["Return Books", "returns", "due dates"] },
+  ];
+  const priority = { book: 4, user: 3, loan: 2, module: 1 };
+  return entries.map((entry) => ({ ...entry, score: searchScore(tokens, entry.fields) }))
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => b.score - a.score || priority[b.kind] - priority[a.kind] || a.title.localeCompare(b.title))
+    .slice(0, 8);
+}
+
+function selectSearchResult(result) {
+  if (!result) return;
+  state.globalSearchQuery = "";
+  if (result.kind === "book") { state.bookSearch = result.record.title; state.bookFilter = "All"; }
+  if (result.kind === "user") state.userSearch = result.record.id;
+  setView(result.view);
+  if (result.kind === "loan") {
+    state.selectedIssuedId = result.record.id;
+    render();
+  }
+}
+
+function signOut() {
+  window.sessionStorage.removeItem(demoSessionKey);
+  state.authenticated = false;
+  state.loginError = "";
+  state.globalSearchQuery = "";
+  state.accountMenuOpen = "";
+  render();
+}
+
 const app = document.querySelector("#app");
 let toastTimer = 0;
 let renderFrame = 0;
+
+function renderAccountMenu(placement) {
+  return `<div class="account-menu account-menu-${placement}" id="account-menu-${placement}" aria-label="Account options"><div class="account-menu-identity"><div class="avatar avatar-small">AL</div><div><strong>Anna Lim</strong><span>Librarian</span></div></div><button type="button" class="account-menu-signout logout-button">Sign out</button></div>`;
+}
 
 function renderSidebar() {
   const items = [
     ["books", "Books Entry", "book"],
     ["users", "User Entry", "users"],
     ["issue", "Issue Books", "issue"],
+    ["return", "Return Books", "return"],
   ];
   return `<aside class="library-sidebar ${state.mobileOpen ? "sidebar-open" : ""}">
     <div class="brand-lockup"><div class="brand-mark"><img src="assets/neu-logo.png" alt="New Era University" width="42" height="42"></div><div><strong>NEU Library</strong><span>Management system</span></div><button type="button" class="mobile-close" aria-label="Close navigation">${icon("x", 18)}</button></div>
     <div class="sidebar-rule"></div>
     <div class="sidebar-context"><span>LIBRARY MANAGEMENT</span><strong>NEU / 1975</strong></div>
     <nav class="library-nav" aria-label="Library modules"><div class="nav-group"><p>Modules</p>${items.map(([id, label, iconName]) => `<a href="?view=${id}" data-view="${id}" class="nav-link ${state.activeView === id ? "nav-link-active" : ""}">${icon(iconName, 17, state.activeView === id ? 2.4 : 2)}<span>${label}</span>${state.activeView === id ? '<span class="nav-active-mark"></span>' : ""}</a>`).join("")}</div></nav>
-    <div class="sidebar-bottom"><div class="desk-status"><span class="status-dot"></span><div><strong>Library desk open</strong><span>Mon–Sat / 7:00 AM–7:00 PM</span></div></div><div class="sidebar-user"><div class="avatar avatar-small">AL</div><div><strong>Anna Lim</strong><span>Librarian</span></div>${icon("chevronDown", 15)}</div></div>
+    <div class="sidebar-bottom"><div class="desk-status"><span class="status-dot"></span><div><strong>Library desk open</strong><span>Mon–Sat / 7:00 AM–7:00 PM</span></div></div><div class="account-menu-wrap sidebar-account-wrap"><button type="button" class="sidebar-user account-menu-trigger" data-account-menu="sidebar" aria-label="Open account menu" aria-expanded="${state.accountMenuOpen === "sidebar"}" aria-controls="account-menu-sidebar"><div class="avatar avatar-small">AL</div><div><strong>Anna Lim</strong><span>Librarian</span></div>${icon("chevronDown", 15)}</button>${state.accountMenuOpen === "sidebar" ? renderAccountMenu("sidebar") : ""}</div></div>
   </aside>${state.mobileOpen ? '<button type="button" class="sidebar-scrim" aria-label="Close navigation"></button>' : ""}`;
+}
+
+function renderLoginView() {
+  return `<main class="login-screen"><section class="login-identity"><div class="login-brand"><img src="assets/neu-logo.png" alt="New Era University"><div><strong>NEU Library</strong><span>Management system</span></div></div><div class="login-intro"><p>New Era University</p><h1>Library work, in one place.</h1><span>Keep the catalogue, student records, lending, and returns moving together.</span></div><div class="login-module-list"><span>Books</span><span>Students</span><span>Issues</span><span>Returns</span></div><p class="login-location">Quezon City · Philippines</p></section><section class="login-main"><div class="login-panel"><p class="login-kicker">Library staff</p><h2>Sign in</h2><p class="login-description">Open the library desk to continue.</p><form id="login-form" class="login-form"><label>Email address<input name="email" type="email" autocomplete="username" placeholder="librarian@neu-library.test" required autofocus></label><label>Password<input name="password" type="password" autocomplete="current-password" placeholder="Enter your password" required></label>${state.loginError ? `<p class="login-error" role="alert">${escapeHtml(state.loginError)}</p>` : ""}<button type="submit" class="library-button button-primary login-submit">Sign in</button></form><section class="login-demo-access" aria-label="Demo account credentials"><div><strong>Demo access</strong><span>Shared credentials for this local prototype</span></div><dl><div><dt>Email</dt><dd>${escapeHtml(demoAccount.email)}</dd></div><div><dt>Password</dt><dd>${escapeHtml(demoAccount.password)}</dd></div></dl></section><p class="login-note">Demo only. This browser-only sign-in does not protect real data.</p></div></section></main>`;
 }
 
 function renderTopbar() {
   const titles = { books: "Books Entry", users: "User Entry", issue: "Issue Books", return: "Return Books" };
-  return `<header class="library-topbar"><div class="topbar-heading"><button type="button" class="mobile-menu" aria-label="Open navigation">${icon("menu", 21)}</button><span class="breadcrumb">NEU LIBRARY <i>/</i></span><strong>${titles[state.activeView]}</strong></div><div class="topbar-actions"><div class="global-search">${icon("search", 17)}<span>Search the library</span><kbd>⌘ K</kbd></div><div class="topbar-avatar avatar">AL</div></div></header>`;
+  const query = state.globalSearchQuery.trim();
+  const results = query ? searchLibrary(query) : [];
+  const icons = { book: "book", user: "users", loan: "return", module: "search" };
+  const labels = { book: "Book", user: "Student", loan: "Loan", module: "Module" };
+  return `<header class="library-topbar"><div class="topbar-heading"><button type="button" class="mobile-menu" aria-label="Open navigation">${icon("menu", 21)}</button><span class="breadcrumb">NEU LIBRARY <i>/</i></span><strong>${titles[state.activeView]}</strong></div><div class="topbar-actions"><div class="global-search"><div class="global-search-field">${icon("search", 17)}<input id="global-search-input" type="search" value="${escapeHtml(state.globalSearchQuery)}" placeholder="Search books, students, and loans" aria-label="Search the library" role="combobox" aria-haspopup="listbox" aria-autocomplete="list" aria-controls="global-search-results" aria-expanded="${Boolean(query)}" autocomplete="off"><kbd>⌘ / Ctrl K</kbd></div>${query ? `<div class="global-search-results" id="global-search-results" role="listbox" aria-label="Search results">${results.length ? results.map((result, index) => `<button type="button" class="global-search-result" role="option" data-search-index="${index}"><span class="search-result-icon">${icon(icons[result.kind], 16)}</span><span class="search-result-copy"><strong>${escapeHtml(result.title)}</strong><small>${escapeHtml(result.detail)}</small></span><span class="search-result-type">${labels[result.kind]}</span></button>`).join("") : `<div class="global-search-empty" role="status">No results for “${escapeHtml(state.globalSearchQuery)}”</div>`}</div>` : ""}</div><div class="topbar-account account-menu-wrap"><button type="button" class="topbar-avatar avatar account-menu-trigger" data-account-menu="topbar" aria-label="Open account menu" aria-expanded="${state.accountMenuOpen === "topbar"}" aria-controls="account-menu-topbar">AL</button>${state.accountMenuOpen === "topbar" ? renderAccountMenu("topbar") : ""}</div></div></header>`;
 }
 
 function sectionHeading(eyebrow, title, description, action = "") {
@@ -196,12 +281,21 @@ function renderIssueView() {
   const selectedBook = state.books.find((book) => book.id === state.selectedBookId);
   const userMatches = state.users.filter((user) => [user.name, user.id, user.email].some((value) => value.toLowerCase().includes(state.issueUserQuery.toLowerCase()))).slice(0, 3);
   const bookMatches = state.books.filter((book) => book.available > 0 && [book.title, book.author, book.isbn].some((value) => value.toLowerCase().includes(state.issueBookQuery.toLowerCase()))).slice(0, 3);
+  const unavailableMatches = state.books.filter((book) => book.available < 1 && [book.title, book.author, book.isbn].some((value) => value.toLowerCase().includes(state.issueBookQuery.toLowerCase()))).slice(0, Math.max(0, 3 - bookMatches.length));
+  const noBooksAvailable = state.books.length > 0 && !state.books.some((book) => book.available > 0);
+  const nextReturn = state.issuedBooks.map((loan) => ({ loan, book: state.books.find((book) => book.id === loan.bookId) })).filter((item) => item.book).sort((a, b) => a.loan.dueAt.localeCompare(b.loan.dueAt))[0];
+  const nextReturnOverdueDays = nextReturn?.loan.dueAt ? lateDays(nextReturn.loan.dueAt, dateInputValue()) : 0;
   const activeLoan = state.issuedBooks.find((loan) => loan.userId === selectedUser?.id);
   const borrowedBook = state.books.find((book) => book.id === activeLoan?.bookId);
   const hasActiveLoan = Boolean(activeLoan);
   const canConfirm = Boolean(selectedUser && !hasActiveLoan && selectedBook && selectedBook.available > 0 && state.issueDate && state.dueDate && state.dueDate >= state.issueDate);
   const userPanel = selectedUser ? `<div class="selected-person"><div class="avatar avatar-large">${escapeHtml(initials(selectedUser.name))}</div><div><strong>${escapeHtml(selectedUser.name)}</strong><span>${escapeHtml(selectedUser.id)} · ${escapeHtml(selectedUser.department)}</span></div></div>` : `<div class="field-with-icon field-large">${icon("search", 18)}<input id="issue-user-search" value="${escapeHtml(state.issueUserQuery)}" placeholder="Search name, student number, or email" autofocus></div><div class="match-list">${userMatches.map((user) => `<button type="button" class="match-user" data-user-id="${escapeHtml(user.id)}"><div class="avatar avatar-small">${escapeHtml(initials(user.name))}</div><span><strong>${escapeHtml(user.name)}</strong><small>${escapeHtml(user.id)} · ${escapeHtml(user.department)}</small>${badge(state.issuedBooks.some((loan) => loan.userId === user.id) ? "Book borrowed" : "No active loan", state.issuedBooks.some((loan) => loan.userId === user.id) ? "gold" : "sage")}</span>${icon("arrowUpRight", 15)}</button>`).join("")}</div>`;
-  const bookPanel = selectedBook ? `<div class="selected-book"><div class="book-cover cover-${selectedBook.category.toLowerCase()}">${icon("book", 22)}</div><div><strong>${escapeHtml(selectedBook.title)}</strong><span>${escapeHtml(selectedBook.author)} · Shelf ${escapeHtml(selectedBook.shelf)}</span>${badge(`${selectedBook.available} copy available`, "sage")}</div></div>` : `<div class="field-with-icon field-large">${icon("search", 18)}<input id="issue-book-search" value="${escapeHtml(state.issueBookQuery)}" placeholder="Search title, author, or ISBN"></div><div class="match-list">${bookMatches.map((book) => `<button type="button" class="match-book" data-book-id="${escapeHtml(book.id)}"><div class="book-mini">${icon("book", 15)}</div><span><strong>${escapeHtml(book.title)}</strong><small>${escapeHtml(book.author)} · ${book.available} available</small></span>${icon("arrowUpRight", 15)}</button>`).join("")}</div>`;
+  const unavailableRows = unavailableMatches.map((book) => {
+    const dueAt = state.issuedBooks.filter((loan) => loan.bookId === book.id).map((loan) => loan.dueAt).sort()[0];
+    const overdueDays = dueAt ? lateDays(dueAt, dateInputValue()) : 0;
+    return `<button type="button" class="match-book" disabled><div class="book-mini">${icon("book", 15)}</div><span><strong>${escapeHtml(book.title)}</strong><small>All copies borrowed · ${dueAt ? `Return due ${escapeHtml(dateLabel(dueAt))}${overdueDays ? ` · ${overdueDays} days overdue` : ""}` : "Return date not recorded"}</small></span>${icon("return", 15)}</button>`;
+  }).join("");
+  const bookPanel = selectedBook ? `<div class="selected-book"><div class="book-cover cover-${selectedBook.category.toLowerCase()}">${icon("book", 22)}</div><div><strong>${escapeHtml(selectedBook.title)}</strong><span>${escapeHtml(selectedBook.author)} · Shelf ${escapeHtml(selectedBook.shelf)}</span>${badge(`${selectedBook.available} copy available`, "sage")}</div></div>` : `<div class="field-with-icon field-large">${icon("search", 18)}<input id="issue-book-search" value="${escapeHtml(state.issueBookQuery)}" placeholder="Search title, author, or ISBN"></div>${noBooksAvailable ? `<div class="notice-banner" role="status">${iconBox("book", "gold")}<div><strong>No books are available to issue</strong><span>${nextReturn?.loan.dueAt ? `Next return due: ${escapeHtml(nextReturn.book.title)} on ${escapeHtml(dateLabel(nextReturn.loan.dueAt))}${nextReturnOverdueDays ? ` · ${nextReturnOverdueDays} days overdue` : ""}` : "No return dates are recorded."}</span></div></div>` : ""}<div class="match-list">${[...bookMatches.map((book) => `<button type="button" class="match-book" data-book-id="${escapeHtml(book.id)}"><div class="book-mini">${icon("book", 15)}</div><span><strong>${escapeHtml(book.title)}</strong><small>${escapeHtml(book.author)} · ${book.available} available</small></span>${icon("arrowUpRight", 15)}</button>`), unavailableRows].join("") || emptyState("book", "No matching books", "Try a different title, author, or ISBN.")}</div>`;
   return `<div class="view-stack">${sectionHeading("MODULE 03 / ISSUE OF BOOKS", "Issue a book", "Issue a book to a registered student based on availability and enter its issue and due dates.")}<div class="notice-banner issue-guide">${iconBox("book", "blue")}<div><strong>How to issue a book</strong><span>1. Select a student. 2. Select an available book. 3. Enter the issue date and due date. 4. Confirm issue.</span></div></div><div class="stepper"><div class="step step-done"><span>1</span><div><strong>Find a student</strong><small>Who is borrowing?</small></div></div><div class="step-line"></div><div class="step ${selectedUser ? "step-done" : "step-current"}"><span>2</span><div><strong>Choose a book</strong><small>What is available?</small></div></div><div class="step-line"></div><div class="step ${selectedUser && selectedBook ? "step-current" : ""}"><span>3</span><div><strong>Confirm issue</strong><small>Record the hand-off.</small></div></div></div><div class="issue-layout"><section class="paper-card issue-card"><div class="card-heading"><div><p class="eyebrow">STUDENT</p><h2>${selectedUser ? "Student selected" : "Find a student"}</h2></div>${selectedUser ? '<button type="button" class="clear-selection" data-clear="user">Change ' + icon("x", 14) + "</button>" : ""}</div>${userPanel}${activeLoan ? `<div class="notice-banner" role="status">${iconBox("book", "gold")}<div><strong>Currently borrowed: ${escapeHtml(borrowedBook?.title ?? "Book")}</strong><span>Issued: ${escapeHtml(dateLabel(activeLoan.issuedAt))} · Due: ${escapeHtml(dateLabel(activeLoan.dueAt))}</span><span>Return this book before borrowing another.</span></div></div>` : selectedUser ? `<div class="notice-banner">${iconBox("check", "sage")}<div><strong>No active loan</strong><span>This student can borrow an available book.</span></div></div>` : ""}</section><section class="paper-card issue-card"><div class="card-heading"><div><p class="eyebrow">BOOK</p><h2>${selectedBook ? "Book selected" : "Choose a book"}</h2></div>${selectedBook ? '<button type="button" class="clear-selection" data-clear="book">Change ' + icon("x", 14) + "</button>" : ""}</div>${bookPanel}</section></div><form id="issue-form" class="paper-card issue-review ${canConfirm ? "review-ready" : ""}"><div><p class="eyebrow">ISSUE SUMMARY</p><h2>${hasActiveLoan ? "Borrowing unavailable" : canConfirm ? "Ready to hand over" : "Complete the selections above"}</h2><p>${hasActiveLoan ? "Return your borrowed book before borrowing another. Choose a different student to continue." : canConfirm && selectedUser ? `The book will be due on ${escapeHtml(dateLabel(state.dueDate))} for ${escapeHtml(selectedUser.name)}.` : "Choose a registered student and an available book to prepare the issue record."}</p></div><div class="issue-review-meta"><label><span>Issue date</span><input id="issue-date" type="date" value="${escapeHtml(state.issueDate)}" required></label><label><span>Due date</span><input id="due-date" type="date" value="${escapeHtml(state.dueDate)}" min="${escapeHtml(state.issueDate)}" required></label>${button(canConfirm ? "Confirm issue" : "Complete the form", "button-primary", "check", "submit", !canConfirm)}</div></form></div>`;
 }
 
@@ -212,14 +306,14 @@ function renderReturnView() {
     const book = state.books.find((item) => item.id === issuedBook.bookId);
     const user = state.users.find((item) => item.id === issuedBook.userId);
     const overdue = lateDays(issuedBook.dueAt, today) > 0;
-    return `<button type="button" class="issued-book-row ${selected?.id === issuedBook.id ? "issued-book-row-active" : ""}" data-issued-id="${escapeHtml(issuedBook.id)}"><div class="book-mini">${icon("book", 16)}</div><div class="issued-book-title"><strong>${escapeHtml(book?.title ?? "Book")}</strong><span>${escapeHtml(issuedBook.id)} · Issued ${escapeHtml(dateLabel(issuedBook.issuedAt))}</span></div><div class="issued-book-user"><span>${escapeHtml(user?.name ?? "Student")}</span><small>${escapeHtml(user?.id ?? "")}</small></div><div class="issued-book-due">${badge(overdue ? "Overdue" : "Active", overdue ? "terra" : "gold")}<span>${overdue ? `${lateDays(issuedBook.dueAt, today)} days late` : `Due ${escapeHtml(dateLabel(issuedBook.dueAt))}`}</span></div>${icon("arrowUpRight", 16)}</button>`;
+    return `<button type="button" class="issued-book-row ${selected?.id === issuedBook.id ? "issued-book-row-active" : ""}" data-issued-id="${escapeHtml(issuedBook.id)}"><div class="book-mini">${icon("book", 16)}</div><div class="issued-book-title"><strong>${escapeHtml(book?.title ?? "Book")}</strong><span>${escapeHtml(issuedBook.id)} · Issued ${escapeHtml(dateLabel(issuedBook.issuedAt))}</span></div><div class="issued-book-user"><span>${escapeHtml(user?.name ?? "Student")}</span><small>${escapeHtml(user?.id ?? "")}</small></div><div class="issued-book-due">${badge(overdue ? "Overdue" : "Active", overdue ? "terra" : "sage")}<span>${overdue ? `${lateDays(issuedBook.dueAt, today)} days late` : `Due ${escapeHtml(dateLabel(issuedBook.dueAt))}`}</span></div>${icon("arrowUpRight", 16)}</button>`;
   }).join("");
   let summary = `<section class="paper-card return-summary">${emptyState("receipt", "Select a book to return", "Choose a book from the list to prepare the return receipt.")}</section>`;
   if (selected) {
     const book = state.books.find((item) => item.id === selected.bookId);
     const user = state.users.find((item) => item.id === selected.userId);
     const fine = lateDays(selected.dueAt, state.returnDate) * 15;
-    summary = `<form id="return-form" class="paper-card return-summary"><div class="receipt-top"><span class="receipt-seal">${icon("receipt", 21)}</span><div><p class="eyebrow">RETURN RECEIPT</p><h2>Review and close</h2></div></div><div class="receipt-rule"></div><div class="receipt-person"><div class="avatar avatar-small">${escapeHtml(initials(user?.name ?? ""))}</div><div><strong>${escapeHtml(user?.name ?? "Student")}</strong><span>${escapeHtml(user?.id ?? "")}</span></div></div><div class="receipt-line"><span>Book</span><strong>${escapeHtml(book?.title ?? "Book")}</strong></div><div class="receipt-line"><span>Due date</span><strong>${escapeHtml(dateLabel(selected.dueAt))}</strong></div><div class="receipt-line receipt-field"><label for="return-date">Return date</label><input id="return-date" type="date" value="${escapeHtml(state.returnDate)}" required></div><div class="fine-box ${fine ? "fine-due" : "fine-clear"}"><div><span>${fine ? "Fine due" : "No fine due"}</span><strong>${peso(fine)}</strong></div>${icon("dollar", 23)}</div>${button(fine ? "Return & record fine" : "Confirm return", "button-primary", "check", "submit")}</form>`;
+    summary = `<form id="return-form" class="paper-card return-summary"><div class="receipt-top"><span class="receipt-seal">${icon("receipt", 21)}</span><div><p class="eyebrow">RETURN RECEIPT</p><h2>Review and close</h2></div><button type="button" class="return-receipt-close" aria-label="Close return receipt">${icon("x", 16)}</button></div><div class="receipt-rule"></div><div class="receipt-person"><div class="avatar avatar-small">${escapeHtml(initials(user?.name ?? ""))}</div><div><strong>${escapeHtml(user?.name ?? "Student")}</strong><span>${escapeHtml(user?.id ?? "")}</span></div></div><div class="receipt-line"><span>Book</span><strong>${escapeHtml(book?.title ?? "Book")}</strong></div><div class="receipt-line"><span>Due date</span><strong>${escapeHtml(dateLabel(selected.dueAt))}</strong></div><div class="receipt-line receipt-field"><label for="return-date">Return date</label><input id="return-date" type="date" value="${escapeHtml(state.returnDate)}" required></div><div class="fine-box ${fine ? "fine-due" : "fine-clear"}"><div><span>${fine ? "Fine due" : "No fine due"}</span><strong>${peso(fine)}</strong></div>${icon("dollar", 23)}</div>${button(fine ? "Return & record fine" : "Confirm return", "button-primary", "check", "submit")}</form>`;
   }
   return `<div class="view-stack">${sectionHeading("MODULE 04 / RETURN OF BOOKS", "Return a book", "Record the return date, restore availability, and calculate any fine for delayed return.", `<div class="desk-counter"><span class="status-dot"></span>${state.issuedBooks.length} books to be returned</div>`)}<div class="return-layout"><section class="paper-card table-card issued-book-table"><div class="table-label"><span>BOOKS TO BE RETURNED</span><span>Sorted by due date</span></div><div class="issued-book-list">${rows || emptyState("return", "No books to be returned", "All issued books have been returned.")}</div></section>${summary}</div></div>`;
 }
@@ -235,11 +329,17 @@ function renderToast() {
 }
 
 function render() {
-  const views = { books: renderBooksView, users: renderUsersView, issue: renderIssueView };
+  if (!state.authenticated) {
+    app.innerHTML = renderLoginView();
+    return;
+  }
+  const views = { books: renderBooksView, users: renderUsersView, issue: renderIssueView, return: renderReturnView };
   app.innerHTML = `<main class="library-app">${renderSidebar()}<section class="library-main">${renderTopbar()}<div class="library-content">${views[state.activeView]()}</div><footer class="library-footer"><span>NEU LIBRARY MANAGEMENT SYSTEM</span><span>New Era University · Quezon City · 2026</span></footer></section>${renderToast()}${renderModal()}</main>`;
 }
 
 function setView(view) {
+  state.globalSearchQuery = "";
+  state.accountMenuOpen = "";
   state.activeView = initialView(view);
   state.mobileOpen = false;
   if (state.activeView === "issue") {
@@ -286,6 +386,7 @@ function focusAfterRender(id) {
 function handleInput(event) {
   const input = event.target;
   if (!(input instanceof HTMLInputElement)) return;
+  if (input.id === "global-search-input") { state.globalSearchQuery = input.value; focusAfterRender(input.id); }
   if (input.id === "book-search") { state.bookSearch = input.value; focusAfterRender(input.id); }
   if (input.id === "user-search") { state.userSearch = input.value; focusAfterRender(input.id); }
   if (input.id === "issue-user-search") { state.issueUserQuery = input.value; focusAfterRender(input.id); }
@@ -296,8 +397,41 @@ function handleInput(event) {
 }
 
 app.addEventListener("click", (event) => {
-  const target = event.target instanceof Element ? event.target.closest("a, button") : null;
-  if (!target || !app.contains(target)) return;
+  const origin = event.target instanceof Element ? event.target : null;
+  const target = origin?.closest("a, button");
+  let dismissedOverlay = false;
+  if (state.globalSearchQuery && origin && !origin.closest(".global-search")) {
+    state.globalSearchQuery = "";
+    dismissedOverlay = true;
+  }
+  if (state.accountMenuOpen && origin && !origin.closest(".account-menu-wrap")) {
+    state.accountMenuOpen = "";
+    dismissedOverlay = true;
+  }
+  if (!target || !app.contains(target)) {
+    if (dismissedOverlay) {
+      const focusId = origin?.id;
+      render();
+      if (focusId) document.getElementById(focusId)?.focus();
+    }
+    return;
+  }
+  if (target.matches(".account-menu-trigger")) {
+    const placement = target.dataset.accountMenu;
+    state.accountMenuOpen = state.accountMenuOpen === placement ? "" : placement;
+    render();
+    return;
+  }
+  if (target.matches(".logout-button")) { signOut(); return; }
+  if (target.matches(".return-receipt-close")) {
+    state.selectedIssuedId = "";
+    render();
+    return;
+  }
+  if (target.matches(".global-search-result")) {
+    selectSearchResult(searchLibrary(state.globalSearchQuery)[Number(target.dataset.searchIndex)]);
+    return;
+  }
   if (target.matches(".nav-link")) {
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
@@ -321,11 +455,42 @@ app.addEventListener("click", (event) => {
 app.addEventListener("input", handleInput);
 app.addEventListener("change", handleInput);
 
+window.addEventListener("keydown", (event) => {
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+    event.preventDefault();
+    document.getElementById("global-search-input")?.focus();
+  } else if (event.key === "Escape" && (state.globalSearchQuery || state.accountMenuOpen)) {
+    state.globalSearchQuery = "";
+    state.accountMenuOpen = "";
+    render();
+  } else if (event.key === "Enter" && document.activeElement?.id === "global-search-input") {
+    const firstResult = searchLibrary(state.globalSearchQuery)[0];
+    if (firstResult) {
+      event.preventDefault();
+      selectSearchResult(firstResult);
+    }
+  }
+});
+
 app.addEventListener("submit", (event) => {
   event.preventDefault();
   const form = event.target;
   const formId = form.getAttribute("id");
   const data = new FormData(form);
+  if (formId === "login-form") {
+    const email = String(data.get("email") ?? "").trim().toLowerCase();
+    const password = String(data.get("password") ?? "");
+    if (email !== demoAccount.email || password !== demoAccount.password) {
+      state.loginError = "Email or password did not match the demo account.";
+      render();
+      return;
+    }
+    window.sessionStorage.setItem(demoSessionKey, demoAccount.id);
+    state.authenticated = true;
+    state.loginError = "";
+    render();
+    return;
+  }
   if (formId === "book-form") {
     const title = String(data.get("title") ?? "").trim();
     const author = String(data.get("author") ?? "").trim();
@@ -381,6 +546,7 @@ app.addEventListener("submit", (event) => {
 window.addEventListener("popstate", () => {
   state.activeView = initialView(new URLSearchParams(window.location.search).get("view"));
   state.mobileOpen = false;
+  state.accountMenuOpen = "";
   render();
 });
 
