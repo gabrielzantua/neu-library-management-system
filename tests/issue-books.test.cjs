@@ -329,7 +329,7 @@ for (const returnDate of ["", " ", null, 123, "not-a-date", "2026-02-30", "2026-
   });
 }
 
-test("returning one of several copies preserves the remaining issued status", () => {
+test("returning one of several copies marks the title available while other copies are issued", () => {
   const { state, submit } = loadApp("return");
   const loan = state.issuedBooks.find((item) => item.bookId === "BK-1048");
   const book = state.books.find((item) => item.id === loan.bookId);
@@ -338,7 +338,7 @@ test("returning one of several copies preserves the remaining issued status", ()
   state.returnDate = "2026-09-01";
   submit("return-form");
   assert.equal(state.books.find((item) => item.id === loan.bookId).available, 2);
-  assert.equal(state.books.find((item) => item.id === loan.bookId).status, "Issued");
+  assert.equal(state.books.find((item) => item.id === loan.bookId).status, "Available");
 });
 
 for (const problem of ["missing book", "missing student", "full stock"]) {
@@ -462,3 +462,39 @@ test("returning the final active loan displays the empty state and keeps all ret
   assert.match(app.innerHTML, /Select a book to return/);
   assert.doesNotMatch(app.innerHTML, /id="return-form"/);
 });
+
+test("catalogue marks partially borrowed titles available in badges, counts, filters and search", () => {
+  const { app, state, click, search } = loadApp("books");
+  const book = state.books.find((item) => item.id === "BK-1048");
+  assert.equal(book.available, 2);
+  assert.equal(book.status, "Available");
+  assert.match(app.innerHTML, /Available <b>4<\/b>/);
+  assert.match(app.innerHTML, /Issued <b>2<\/b>/);
+  state.bookSearch = book.title;
+  click(".filter-option", { filter: "Available" });
+  assert.match(app.innerHTML, /Clean Code/);
+  assert.match(app.innerHTML, /badge-sage">Available/);
+  click(".filter-option", { filter: "Issued" });
+  assert.match(app.innerHTML, /No books found/);
+  assert.equal(search("available clean code")[0].record.id, book.id);
+});
+
+for (const [bookId, remaining, expectedStatus] of [["BK-1048", 1, "Available"], ["BK-1051", 0, "Issued"]]) {
+  test(`issuing a copy with ${remaining} remaining gives catalogue status ${expectedStatus}`, () => {
+    const { app, state, submit, navigate, click, search } = loadApp("issue");
+    state.selectedUserId = state.users.find((user) => !state.issuedBooks.some((loan) => loan.userId === user.id)).id;
+    state.selectedBookId = bookId;
+    submit("issue-form");
+    const book = state.books.find((item) => item.id === bookId);
+    assert.equal(book.available, remaining);
+    assert.equal(book.status, expectedStatus);
+    navigate("books");
+    state.bookSearch = book.title;
+    click(".filter-option", { filter: expectedStatus });
+    assert.ok(app.innerHTML.includes(book.title));
+    assert.ok(app.innerHTML.includes(`>${expectedStatus}</span>`));
+    assert.equal(search(`${expectedStatus} ${book.title}`)[0].record.id, bookId);
+    click(".filter-option", { filter: expectedStatus === "Available" ? "Issued" : "Available" });
+    assert.match(app.innerHTML, /No books found/);
+  });
+}

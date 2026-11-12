@@ -3,7 +3,8 @@
 This is the HTML, CSS, and JavaScript version of our New Era University
 library interface. It includes these assignment modules:
 
-1. **Books Entry:** record books received by the library.
+1. **Books Entry:** record books received by the library. A title is Available
+   whenever at least one copy remains, and Issued when no copies remain available.
 2. **User Entry:** record student details.
 3. **Issue Books:** select a registered student and an available book, set issue
    and due dates, and confirm the issue. Each student may have only one active

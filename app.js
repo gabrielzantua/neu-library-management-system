@@ -119,7 +119,7 @@ function button(label, className = "button-primary", name = "", type = "button",
 }
 
 const seedBooks = [
-  { id: "BK-1048", isbn: "978-0132350884", title: "Clean Code", author: "Robert C. Martin", category: "Technology", shelf: "A-03", available: 2, total: 3, status: "Issued" },
+  { id: "BK-1048", isbn: "978-0132350884", title: "Clean Code", author: "Robert C. Martin", category: "Technology", shelf: "A-03", available: 2, total: 3, status: "Available" },
   { id: "BK-1051", isbn: "978-0262033848", title: "Introduction to Algorithms", author: "Thomas H. Cormen", category: "Technology", shelf: "A-07", available: 1, total: 2, status: "Available" },
   { id: "BK-1073", isbn: "978-9715081227", title: "Florante at Laura", author: "Francisco Balagtas", category: "Literature", shelf: "B-11", available: 3, total: 3, status: "Available" },
   { id: "BK-1110", isbn: "978-1449373320", title: "Designing Data-Intensive Applications", author: "Martin Kleppmann", category: "Technology", shelf: "A-09", available: 0, total: 1, status: "Issued" },
@@ -544,7 +544,11 @@ app.addEventListener("submit", (event) => {
     }
     const issuedBook = { id: `IR-${String(nextIssuedNumber++).padStart(5, "0")}`, bookId: book.id, userId: user.id, issuedAt: state.issueDate, dueAt: state.dueDate };
     state.issuedBooks.unshift(issuedBook);
-    state.books = state.books.map((item) => item.id === book.id ? { ...item, available: item.available - 1, status: "Issued" } : item);
+    state.books = state.books.map((item) => {
+      if (item.id !== book.id) return item;
+      const available = item.available - 1;
+      return { ...item, available, status: available > 0 ? "Available" : "Issued" };
+    });
     state.selectedUserId = "";
     state.selectedBookId = "";
     notify(`${book.title} issued to ${user.name}.`);
@@ -574,7 +578,7 @@ app.addEventListener("submit", (event) => {
     const updatedBooks = state.books.map((item) => {
       if (item.id !== issuedBook.bookId) return item;
       const available = item.available + 1;
-      return { ...item, available, status: available >= item.total ? "Available" : "Issued" };
+      return { ...item, available, status: available > 0 ? "Available" : "Issued" };
     });
     state.returnRecords.push(returnRecord);
     state.issuedBooks = state.issuedBooks.filter((item) => item.id !== issuedBook.id);
