@@ -150,19 +150,21 @@ test("module navigation and direct links include Return Books", () => {
 
 test("issuing updates inventory, confirms success, and prepares another issue", () => {
   const { app, state, submit } = loadApp();
-  const book = state.books.find((item) => item.available === 1);
+  const book = state.books.find((item) => item.available > 0);
+  const availableBefore = book.available;
   const count = state.issuedBooks.length;
   state.selectedUserId = state.users.find((user) => !state.issuedBooks.some((loan) => loan.userId === user.id)).id;
   state.selectedBookId = book.id;
   submit();
   assert.equal(state.issuedBooks.length, count + 1);
   assert.equal(state.issuedBooks[0].bookId, book.id);
-  assert.equal(state.books.find((item) => item.id === book.id).available, 0);
+  assert.equal(state.books.find((item) => item.id === book.id).available, availableBefore - 1);
+  assert.equal(state.books.find((item) => item.id === book.id).status, availableBefore - 1 > 0 ? "Available" : "Issued");
   assert.equal(state.activeView, "issue");
   assert.equal(state.selectedUserId, "");
   assert.equal(state.selectedBookId, "");
   assert.match(app.innerHTML, /issued to/);
-  assert.doesNotMatch(app.innerHTML, new RegExp(`data-book-id="${book.id}"`));
+  assert.equal(app.innerHTML.includes(`data-book-id="${book.id}"`), availableBefore - 1 > 0);
   submit();
   assert.equal(state.issuedBooks.length, count + 1);
 });
@@ -329,16 +331,20 @@ for (const returnDate of ["", " ", null, 123, "not-a-date", "2026-02-30", "2026-
   });
 }
 
-test("returning one of several copies marks the title available while other copies are issued", () => {
+test("returning one of several copies restores availability while an unavailable copy stays accounted for", () => {
   const { state, submit } = loadApp("return");
   const loan = state.issuedBooks.find((item) => item.bookId === "BK-1048");
   const book = state.books.find((item) => item.id === loan.bookId);
   book.available = 1;
+  book.unavailable = { damaged: 1, lost: 0, repair: 0 };
   state.selectedIssuedId = loan.id;
   state.returnDate = "2026-09-01";
   submit("return-form");
-  assert.equal(state.books.find((item) => item.id === loan.bookId).available, 2);
-  assert.equal(state.books.find((item) => item.id === loan.bookId).status, "Available");
+  const updated = state.books.find((item) => item.id === loan.bookId);
+  assert.equal(updated.available, 2);
+  assert.equal(updated.unavailable.damaged, 1);
+  assert.equal(updated.available + updated.unavailable.damaged, updated.total);
+  assert.equal(updated.status, "Available");
 });
 
 for (const problem of ["missing book", "missing student", "full stock"]) {
@@ -479,7 +485,7 @@ test("catalogue marks partially borrowed titles available in badges, counts, fil
   assert.equal(search("available clean code")[0].record.id, book.id);
 });
 
-for (const [bookId, remaining, expectedStatus] of [["BK-1048", 1, "Available"], ["BK-1051", 0, "Issued"]]) {
+for (const [bookId, remaining, expectedStatus] of [["BK-1048", 1, "Available"], ["BK-1051", 1, "Available"]]) {
   test(`issuing a copy with ${remaining} remaining gives catalogue status ${expectedStatus}`, () => {
     const { app, state, submit, navigate, click, search } = loadApp("issue");
     state.selectedUserId = state.users.find((user) => !state.issuedBooks.some((loan) => loan.userId === user.id)).id;
@@ -498,3 +504,308 @@ for (const [bookId, remaining, expectedStatus] of [["BK-1048", 1, "Available"], 
     assert.match(app.innerHTML, /No books found/);
   });
 }
+
+test("issuing the final copy gives the catalogue Issued status", () => {
+  const { app, state, submit, navigate, click, search } = loadApp("issue");
+  submit("book-form", { title: "Single Copy Title", author: "Test Author", isbn: "single-copy", copies: "1", category: "Technology", shelf: "A-01" });
+  const book = state.books[0];
+  state.selectedUserId = state.users.find((user) => !state.issuedBooks.some((loan) => loan.userId === user.id)).id;
+  state.selectedBookId = book.id;
+  submit("issue-form");
+  const updated = state.books.find((item) => item.id === book.id);
+  assert.equal(updated.available, 0);
+  assert.equal(updated.status, "Issued");
+  navigate("books");
+  state.bookSearch = book.title;
+  click(".filter-option", { filter: "Issued" });
+  assert.ok(app.innerHTML.includes(book.title));
+  assert.ok(app.innerHTML.includes(">Issued</span>"));
+  assert.equal(search(`Issued ${book.title}`)[0].record.id, book.id);
+  click(".filter-option", { filter: "Available" });
+  assert.match(app.innerHTML, /No books found/);
+});
+
+function inventorySnapshot(state) {
+  return state.books.map((book) => ({
+    id: book.id,
+    available: book.available,
+    total: book.total,
+    unavailable: { ...book.unavailable },
+    borrowed: state.issuedBooks.filter((loan) => loan.bookId === book.id).length,
+  }));
+}
+
+function assertInventoryInvariant(state) {
+  for (const book of state.books) {
+    const borrowed = state.issuedBooks.filter((loan) => loan.bookId === book.id).length;
+    const unavailable = Object.values(book.unavailable ?? {}).reduce((total, count) => total + (Number.isInteger(count) ? count : 0), 0);
+    assert.equal(book.available + borrowed + unavailable, book.total, `${book.id} must reconcile to its total copies`);
+    assert.ok(book.available >= 0, `${book.id} cannot have negative available copies`);
+    assert.ok(unavailable >= 0, `${book.id} cannot have negative unavailable copies`);
+  }
+}
+
+test("initial inventory reconciles every title, including the corrected BK-1051 record", () => {
+  const { state } = loadApp("books");
+  const algorithms = state.books.find((book) => book.id === "BK-1051");
+  assert.equal(algorithms.total, 2);
+  assert.equal(algorithms.available, 2);
+  assert.equal(state.issuedBooks.filter((loan) => loan.bookId === "BK-1051").length, 0);
+  assert.deepEqual(JSON.parse(JSON.stringify(algorithms.unavailable)), { damaged: 0, lost: 0, repair: 0 });
+  assertInventoryInvariant(state);
+});
+
+test("issuing and returning preserve the inventory invariant", () => {
+  const { state, submit } = loadApp("issue");
+  const book = state.books.find((item) => item.id === "BK-1051");
+  const user = state.users.find((item) => !state.issuedBooks.some((loan) => loan.userId === item.id));
+  state.selectedUserId = user.id;
+  state.selectedBookId = book.id;
+  submit("issue-form");
+  assert.equal(state.books.find((item) => item.id === book.id).available, 1);
+  assertInventoryInvariant(state);
+
+  const loan = state.issuedBooks.find((item) => item.userId === user.id);
+  state.selectedIssuedId = loan.id;
+  state.returnDate = "2026-11-06";
+  submit("return-form");
+  assert.equal(state.books.find((item) => item.id === book.id).available, 2);
+  assert.equal(state.returnRecords.length, 1);
+  assertInventoryInvariant(state);
+});
+
+test("librarians can mark copies damaged or lost and restore them without changing loans", () => {
+  const { app, state, submit, navigate, click, render } = loadApp("books");
+  const book = state.books.find((item) => item.id === "BK-1051");
+  const loanCount = state.issuedBooks.length;
+  click(".stock-adjust", { stockBook: book.id });
+  assert.equal(state.modal, "stock");
+  assert.match(app.innerHTML, /Manage copies/);
+  assert.match(app.innerHTML, /No copies are currently marked damaged, lost, or under repair/);
+
+  submit("stock-form", { bookId: book.id, action: "mark", reason: "damaged" });
+  let updated = state.books.find((item) => item.id === book.id);
+  assert.equal(updated.available, 1);
+  assert.equal(updated.unavailable.damaged, 1);
+  assert.equal(updated.status, "Available");
+  assert.equal(state.issuedBooks.length, loanCount);
+  assert.equal(state.returnRecords.length, 0);
+  assert.match(app.innerHTML, /1 damaged/);
+  assertInventoryInvariant(state);
+
+  submit("stock-form", { bookId: book.id, action: "mark", reason: "lost" });
+  updated = state.books.find((item) => item.id === book.id);
+  assert.equal(updated.available, 0);
+  assert.equal(updated.unavailable.damaged, 1);
+  assert.equal(updated.unavailable.lost, 1);
+  assert.equal(updated.status, "Unavailable");
+  assertInventoryInvariant(state);
+
+  const before = JSON.stringify(inventorySnapshot(state));
+  submit("stock-form", { bookId: book.id, action: "mark", reason: "lost" });
+  assert.equal(JSON.stringify(inventorySnapshot(state)), before);
+  assert.match(state.toast, /No available copy/);
+  submit("stock-form", { bookId: book.id, action: "restore", reason: "repair" });
+  assert.equal(JSON.stringify(inventorySnapshot(state)), before);
+  assert.match(state.toast, /No copies are recorded as under repair/);
+
+  submit("stock-form", { bookId: book.id, action: "restore", reason: "damaged" });
+  updated = state.books.find((item) => item.id === book.id);
+  assert.equal(updated.available, 1);
+  assert.equal(updated.unavailable.damaged, 0);
+  assert.equal(updated.unavailable.lost, 1);
+  assert.equal(updated.status, "Available");
+  assertInventoryInvariant(state);
+
+  state.modal = "";
+  navigate("books");
+  state.bookSearch = "Introduction to Algorithms";
+  render();
+  assert.match(app.innerHTML, /1 lost/);
+  click(".filter-option", { filter: "Available" });
+  assert.match(app.innerHTML, /Introduction to Algorithms/);
+  click(".filter-option", { filter: "Unavailable" });
+  assert.match(app.innerHTML, /No books found/);
+});
+
+test("all-unavailable titles appear as Unavailable and cannot be issued", () => {
+  const { app, state, submit, navigate, click, render } = loadApp("books");
+  const book = state.books.find((item) => item.id === "BK-1051");
+  state.modal = "stock";
+  state.stockBookId = book.id;
+  submit("stock-form", { bookId: book.id, action: "mark", reason: "damaged" });
+  submit("stock-form", { bookId: book.id, action: "mark", reason: "repair" });
+  const updated = state.books.find((item) => item.id === book.id);
+  assert.equal(updated.available, 0);
+  assert.equal(updated.unavailable.damaged, 1);
+  assert.equal(updated.unavailable.repair, 1);
+  assert.equal(updated.status, "Unavailable");
+  assertInventoryInvariant(state);
+
+  state.modal = "";
+  navigate("books");
+  state.bookSearch = book.title;
+  click(".filter-option", { filter: "Unavailable" });
+  assert.match(app.innerHTML, /badge-terra">Unavailable/);
+  assert.match(app.innerHTML, /1 damaged · 1 under repair/);
+
+  navigate("issue");
+  const user = state.users.find((item) => !state.issuedBooks.some((loan) => loan.userId === item.id));
+  state.selectedUserId = user.id;
+  state.selectedBookId = "";
+  state.issueBookQuery = book.title;
+  const loanCount = state.issuedBooks.length;
+  render();
+  assert.doesNotMatch(app.innerHTML, new RegExp(`data-book-id="${book.id}"`));
+  assert.match(app.innerHTML, /No borrowable copies/);
+  state.selectedBookId = book.id;
+  submit("issue-form");
+  assert.equal(state.issuedBooks.length, loanCount);
+  assert.equal(state.books.find((item) => item.id === book.id).available, 0);
+  assertInventoryInvariant(state);
+
+  state.modal = "stock";
+  state.stockBookId = book.id;
+  submit("stock-form", { bookId: book.id, action: "restore", reason: "repair" });
+  state.modal = "";
+  state.selectedBookId = "";
+  render();
+  assert.match(app.innerHTML, new RegExp(`data-book-id="${book.id}"`));
+  state.selectedBookId = book.id;
+  submit("issue-form");
+  assert.equal(state.issuedBooks.length, loanCount + 1);
+  const issuedBook = state.books.find((item) => item.id === book.id);
+  assert.equal(issuedBook.available, 0);
+  assert.equal(issuedBook.unavailable.damaged, 1);
+  assert.equal(issuedBook.status, "Issued");
+  assertInventoryInvariant(state);
+});
+
+test("returns restore only the borrowed copy and leave damaged copies accounted for", () => {
+  const { state, submit } = loadApp("return");
+  const book = state.books.find((item) => item.id === "BK-1048");
+  const loan = state.issuedBooks.find((item) => item.bookId === book.id);
+  state.modal = "stock";
+  state.stockBookId = book.id;
+  submit("stock-form", { bookId: book.id, action: "mark", reason: "damaged" });
+  assert.equal(state.books.find((item) => item.id === book.id).available, 1);
+  assertInventoryInvariant(state);
+
+  state.selectedIssuedId = loan.id;
+  state.returnDate = "2026-09-01";
+  submit("return-form");
+  const updated = state.books.find((item) => item.id === book.id);
+  assert.equal(updated.available, 2);
+  assert.equal(updated.unavailable.damaged, 1);
+  assert.equal(updated.status, "Available");
+  assert.equal(state.returnRecords.length, 1);
+  assertInventoryInvariant(state);
+});
+
+test("completed returns immediately appear in searchable return history", () => {
+  const { app, state, submit, render } = loadApp("return");
+  const historyIds = () => [...app.innerHTML.matchAll(/data-return-id="([^"]+)"/g)].map((match) => match[1]);
+  assert.match(app.innerHTML, /No returns recorded yet/);
+  assert.match(app.innerHTML, /Session only · resets on refresh/);
+
+  const loan = state.issuedBooks.find((item) => item.id === "IR-00412");
+  state.selectedIssuedId = loan.id;
+  state.returnDate = "2026-08-28";
+  submit("return-form");
+  assert.equal(state.returnRecords.length, 1);
+  assert.deepEqual(historyIds(), ["IR-00412"]);
+  assert.match(app.innerHTML, /RETURN HISTORY/);
+  assert.match(app.innerHTML, /Designing Data-Intensive Applications/);
+  assert.match(app.innerHTML, /Alyssa Reyes/);
+  assert.match(app.innerHTML, /21-31426-708/);
+  assert.match(app.innerHTML, /4 days/);
+  assert.match(app.innerHTML, /₱60/);
+
+  state.returnHistorySearch = "alyssa reyes";
+  render();
+  assert.deepEqual(historyIds(), ["IR-00412"]);
+  state.returnHistorySearch = "designing data";
+  render();
+  assert.deepEqual(historyIds(), ["IR-00412"]);
+  state.returnHistorySearch = "IR-00412";
+  render();
+  assert.deepEqual(historyIds(), ["IR-00412"]);
+  state.returnHistorySearch = "no such return";
+  render();
+  assert.deepEqual(historyIds(), []);
+  assert.match(app.innerHTML, /No returns match your search/);
+});
+
+test("Return Books filters All, Active, and Overdue loans with estimated fines", () => {
+  const { app, state, click } = loadApp("return");
+  const loanIds = () => [...app.innerHTML.matchAll(/data-issued-id="([^"]+)"/g)].map((match) => match[1]);
+  assert.match(app.innerHTML, /All loans <b>3<\/b>/);
+  assert.match(app.innerHTML, /Active <b>1<\/b>/);
+  assert.match(app.innerHTML, /Overdue <b>2<\/b>/);
+  assert.match(app.innerHTML, /Estimated fines/);
+  assert.match(app.innerHTML, /₱2,100/);
+
+  click(".loan-filter", { loanFilter: "overdue" });
+  assert.deepEqual(loanIds(), ["IR-00412", "IR-00413"]);
+  assert.match(app.innerHTML, /74 days late/);
+  assert.match(app.innerHTML, /₱1,110/);
+  assert.match(app.innerHTML, /Est\. fine ₱1,110/);
+  assert.match(app.innerHTML, /66 days late/);
+  assert.match(app.innerHTML, /₱990/);
+
+  click(".loan-filter", { loanFilter: "active" });
+  assert.deepEqual(loanIds(), ["IR-00414"]);
+  assert.match(app.innerHTML, /badge-sage">Active/);
+  assert.doesNotMatch(app.innerHTML, /days late/);
+
+  click(".loan-filter", { loanFilter: "all" });
+  assert.deepEqual(loanIds(), ["IR-00412", "IR-00413", "IR-00414"]);
+});
+
+test("loan filters and empty states update immediately after returns", () => {
+  const { app, state, submit, click } = loadApp("return");
+  const loanIds = () => [...app.innerHTML.matchAll(/data-issued-id="([^"]+)"/g)].map((match) => match[1]);
+  click(".loan-filter", { loanFilter: "overdue" });
+  const firstOverdue = state.issuedBooks.find((item) => item.id === "IR-00412");
+  state.selectedIssuedId = firstOverdue.id;
+  state.returnDate = "2026-08-28";
+  submit("return-form");
+  assert.equal(state.loanFilter, "overdue");
+  assert.deepEqual(loanIds(), ["IR-00413"]);
+  assert.match(app.innerHTML, /Overdue <b>1<\/b>/);
+  assert.match(app.innerHTML, /All loans <b>2<\/b>/);
+  assert.match(app.innerHTML, /data-return-id="IR-00412"/);
+
+  const current = state.issuedBooks.find((item) => item.id === "IR-00414");
+  state.selectedIssuedId = current.id;
+  state.returnDate = "2026-11-06";
+  submit("return-form");
+  click(".loan-filter", { loanFilter: "active" });
+  assert.deepEqual(loanIds(), []);
+  assert.match(app.innerHTML, /No active loans/);
+  assert.match(app.innerHTML, /Every active loan is overdue/);
+
+  for (const loan of [...state.issuedBooks]) {
+    state.selectedIssuedId = loan.id;
+    state.returnDate = "2026-11-06";
+    submit("return-form");
+  }
+  click(".loan-filter", { loanFilter: "all" });
+  assert.deepEqual(loanIds(), []);
+  assert.match(app.innerHTML, /No books to be returned/);
+  assert.equal(state.returnRecords.length, 3);
+  assert.match(app.innerHTML, /RETURN HISTORY/);
+});
+
+test("new catalogue titles start fully available with zero unavailable copies", () => {
+  const { state, submit, navigate } = loadApp("books");
+  submit("book-form", { title: "Inventory Test", author: "Test Author", isbn: "inventory-test", copies: "2" });
+  const book = state.books[0];
+  assert.equal(book.available, 2);
+  assert.equal(book.total, 2);
+  assert.deepEqual(JSON.parse(JSON.stringify(book.unavailable)), { damaged: 0, lost: 0, repair: 0 });
+  assert.equal(book.status, "Available");
+  assertInventoryInvariant(state);
+  navigate("issue");
+  assert.match(state.books[0].title, /Inventory Test/);
+});
