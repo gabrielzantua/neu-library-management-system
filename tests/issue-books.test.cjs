@@ -677,7 +677,7 @@ test("all-unavailable titles appear as Unavailable and cannot be issued", () => 
   const issuedBook = state.books.find((item) => item.id === book.id);
   assert.equal(issuedBook.available, 0);
   assert.equal(issuedBook.unavailable.damaged, 1);
-  assert.equal(issuedBook.status, "Issued");
+  assert.equal(issuedBook.status, "Unavailable");
   assertInventoryInvariant(state);
 });
 
@@ -808,4 +808,68 @@ test("new catalogue titles start fully available with zero unavailable copies", 
   assertInventoryInvariant(state);
   navigate("issue");
   assert.match(state.books[0].title, /Inventory Test/);
+});
+
+for (const [reason, label] of [["damaged", "damaged"], ["lost", "lost"], ["repair", "under repair"]]) {
+  test(`a title whose only copies are ${label} shows Unavailable, not Issued`, () => {
+    const { app, state, submit, navigate, click, search } = loadApp("books");
+    const book = state.books.find((item) => item.id === "BK-1051");
+    state.modal = "stock";
+    state.stockBookId = book.id;
+    submit("stock-form", { bookId: book.id, action: "mark", reason });
+    submit("stock-form", { bookId: book.id, action: "mark", reason });
+
+    const updated = state.books.find((item) => item.id === book.id);
+    assert.equal(updated.available, 0);
+    assert.equal(updated.unavailable[reason], 2);
+    assert.equal(updated.status, "Unavailable");
+    assert.equal(state.issuedBooks.filter((loan) => loan.bookId === book.id).length, 0);
+    assertInventoryInvariant(state);
+
+    state.modal = "";
+    navigate("books");
+    state.bookSearch = book.title;
+    click(".filter-option", { filter: "Unavailable" });
+    assert.match(app.innerHTML, /badge-terra">Unavailable/);
+    assert.doesNotMatch(app.innerHTML, /badge-gold">Issued/);
+    assert.equal(search(`Unavailable ${book.title}`)[0].record.id, book.id);
+
+    click(".filter-option", { filter: "Issued" });
+    assert.match(app.innerHTML, /No books found/);
+  });
+}
+
+test("mixed loans and unavailable copies stay Unavailable until a copy is restored", () => {
+  const { app, state, submit, navigate, click } = loadApp("books");
+  const book = state.books.find((item) => item.id === "BK-1048");
+  const loan = state.issuedBooks.find((item) => item.bookId === book.id);
+  state.modal = "stock";
+  state.stockBookId = book.id;
+  submit("stock-form", { bookId: book.id, action: "mark", reason: "damaged" });
+  submit("stock-form", { bookId: book.id, action: "mark", reason: "damaged" });
+
+  let updated = state.books.find((item) => item.id === book.id);
+  assert.equal(updated.available, 0);
+  assert.equal(updated.unavailable.damaged, 2);
+  assert.equal(state.issuedBooks.filter((item) => item.bookId === book.id).length, 1);
+  assert.equal(updated.status, "Unavailable");
+  assertInventoryInvariant(state);
+
+  state.modal = "";
+  navigate("books");
+  state.bookSearch = book.title;
+  click(".filter-option", { filter: "Unavailable" });
+  assert.match(app.innerHTML, /2 damaged/);
+  assert.match(app.innerHTML, /badge-terra">Unavailable/);
+  click(".filter-option", { filter: "Issued" });
+  assert.match(app.innerHTML, /No books found/);
+
+  state.selectedIssuedId = loan.id;
+  state.returnDate = "2026-09-01";
+  submit("return-form");
+  updated = state.books.find((item) => item.id === book.id);
+  assert.equal(updated.available, 1);
+  assert.equal(updated.unavailable.damaged, 2);
+  assert.equal(updated.status, "Available");
+  assertInventoryInvariant(state);
 });

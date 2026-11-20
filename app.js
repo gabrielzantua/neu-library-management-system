@@ -224,9 +224,12 @@ function inventoryTotals(book) {
 function bookStatus(book) {
   if (book.available > 0) return "Available";
   const totals = inventoryTotals(book);
-  if (totals.borrowed > 0) return "Issued";
+  // Explicitly unavailable copies take priority over loans. A title is only
+  // "Issued" when every copy is out on loan; damaged, lost, or under-repair
+  // copies make it "Unavailable" even if other copies are also on loan.
   if (totals.unavailable > 0) return "Unavailable";
-  return "Issued";
+  if (totals.borrowed > 0) return "Issued";
+  return "Unavailable";
 }
 
 function syncBookStatus(book) {
@@ -299,7 +302,7 @@ function searchLibrary(query) {
   const tokens = normalizeSearchText(query).split(/\s+/).filter(Boolean);
   if (!tokens.length) return [];
   const entries = [
-    ...state.books.map((book) => ({ kind: "book", title: book.title, detail: `${book.author} · ${book.id}`, view: "books", record: book, fields: [book.title, book.author, book.isbn, book.category, book.shelf, book.id, book.status, unavailableBreakdown(book)] })),
+    ...state.books.map((book) => ({ kind: "book", title: book.title, detail: `${book.author} · ${book.id}`, view: "books", record: book, fields: [book.title, book.author, book.isbn, book.category, book.shelf, book.id, bookStatus(book), unavailableBreakdown(book)] })),
     ...state.users.map((user) => ({ kind: "user", title: user.name, detail: `${user.id} · ${user.department}`, view: "users", record: user, fields: [user.name, user.id, user.email, user.department] })),
     ...state.issuedBooks.map((loan) => {
       const book = state.books.find((item) => item.id === loan.bookId);

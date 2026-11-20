@@ -5,9 +5,10 @@ library interface. It includes these assignment modules:
 
 1. **Books Entry:** record books received by the library, review available,
    borrowed, and explicitly unavailable copies, and mark or restore damaged,
-   lost, or under-repair copies. A title is Available when at least one copy is
-   borrowable, Issued when every copy is on loan, and Unavailable when no copy is
-   borrowable and none is on loan.
+   lost, or under-repair copies. A title is **Available** when at least one copy
+   is borrowable and **Issued** only when every copy is on loan. It is
+   **Unavailable** when no copy is borrowable and at least one copy is damaged,
+   lost, or under repair, even if other copies are also on loan.
 2. **User Entry:** record student details.
 3. **Issue Books:** select a registered student and an available book, set issue
    and due dates, and confirm the issue. Each student may have only one active
@@ -35,6 +36,15 @@ available copy unavailable or restore one unavailable copy. The action is
 blocked when it would make any quantity negative or break the total. Unavailable
 copies cannot be issued. Status and counts are recalculated after every issue,
 return, and inventory adjustment.
+
+Title status is recalculated from the copy counts, so labels stay accurate after
+every issue, return, and inventory adjustment:
+
+- **Available:** at least one copy can be borrowed.
+- **Issued:** no copy is available and every copy is on loan.
+- **Unavailable:** no copy is available and at least one copy is damaged, lost,
+  or under repair. This also applies when other copies are on loan, so a mixed
+  record is never mislabelled as fully Issued.
 
 **Lost copies remain part of a title's total until they are formally written
 off.** This prototype does not implement write-off or replacement accounting, so
