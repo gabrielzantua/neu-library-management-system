@@ -570,7 +570,7 @@ function notify(message) {
   render();
   toastTimer = window.setTimeout(() => {
     state.toast = "";
-    render();
+    app.querySelector?.(".library-toast")?.remove();
   }, 3200);
 }
 
@@ -586,6 +586,28 @@ function focusAfterRender(id) {
   });
 }
 
+function updateDateField(input) {
+  const isReturn = input.id === "return-date";
+  const isIssueDate = input.id === "issue-date";
+  const key = isReturn ? "returnDate" : isIssueDate ? "issueDate" : "dueDate";
+  if (state[key] === input.value) return;
+  state[key] = input.value;
+
+  // Keep the native date controls mounted so typing retains the active segment.
+  const form = input.form;
+  const preview = document.createElement("template");
+  preview.innerHTML = isReturn ? renderReturnView() : renderIssueView();
+  const updatedForm = preview.content.querySelector(isReturn ? "#return-form" : "#issue-form");
+  if (isIssueDate) form.querySelector("#due-date").min = input.value;
+  const details = isReturn ? ".fine-box" : ":scope > div:first-child";
+  form.querySelector(details).replaceWith(updatedForm.querySelector(details));
+  const button = form.querySelector('button[type="submit"]');
+  const updatedButton = updatedForm.querySelector('button[type="submit"]');
+  button.disabled = updatedButton.disabled;
+  button.innerHTML = updatedButton.innerHTML;
+  if (!isReturn) form.classList.toggle("review-ready", updatedForm.classList.contains("review-ready"));
+}
+
 function handleInput(event) {
   const input = event.target;
   if (!(input instanceof HTMLInputElement)) return;
@@ -594,9 +616,7 @@ function handleInput(event) {
   if (input.id === "user-search") { state.userSearch = input.value; focusAfterRender(input.id); }
   if (input.id === "issue-user-search") { state.issueUserQuery = input.value; focusAfterRender(input.id); }
   if (input.id === "issue-book-search") { state.issueBookQuery = input.value; focusAfterRender(input.id); }
-  if (input.id === "issue-date") { state.issueDate = input.value; focusAfterRender(input.id); }
-  if (input.id === "due-date") { state.dueDate = input.value; focusAfterRender(input.id); }
-  if (input.id === "return-date") { state.returnDate = input.value; focusAfterRender(input.id); }
+  if (["issue-date", "due-date", "return-date"].includes(input.id)) updateDateField(input);
   if (input.id === "return-history-search") { state.returnHistorySearch = input.value; focusAfterRender(input.id); }
 }
 
