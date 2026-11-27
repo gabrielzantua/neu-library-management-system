@@ -158,6 +158,7 @@ const seedIssuedBooks = [
 ];
 
 // Returned loan IDs remain unique for the lifetime of the in-memory records.
+let nextBookNumber = 1200 + seedBooks.length;
 let nextIssuedNumber = Math.max(...seedIssuedBooks.map((loan) => Number(loan.id.slice(3)))) + 1;
 
 function initialView(value) {
@@ -507,17 +508,25 @@ function renderReturnView() {
   return `<div class="view-stack">${sectionHeading("MODULE 04 / RETURN OF BOOKS", "Return a book", "Record the return date, restore availability, and calculate any fine for delayed return.", `<div class="desk-counter"><span class="status-dot"></span>${counts.all} books to be returned${counts.overdue ? ` · ${counts.overdue} overdue` : ""}</div>`)}${policyBanner}${overview}<div class="return-layout"><section class="paper-card table-card issued-book-table"><div class="table-label"><span>BOOKS TO BE RETURNED</span><span>${filtered.length} of ${counts.all} · Sorted by due date</span></div>${filterRow}<div class="issued-book-list">${rows || emptyState("return", emptyTitle, emptyBody)}</div></section>${summary}</div>${renderReturnHistory()}</div>`;
 }
 
+function canRemoveBook(bookId) {
+  return !activeLoanCount(bookId) && !state.returnRecords.some((record) => record.bookId === bookId);
+}
+
 function renderStockModal() {
   const book = state.books.find((item) => item.id === state.stockBookId);
   if (!book) return "";
   const totals = inventoryTotals(book);
   const breakdown = unavailableBreakdown(book);
-  return `<div class="modal-layer" role="presentation"><button type="button" class="modal-backdrop" aria-label="Close dialog"></button><section class="library-modal" role="dialog" aria-modal="true" aria-labelledby="stock-modal-title"><button type="button" class="modal-close" aria-label="Close dialog">${icon("x", 18)}</button><p class="eyebrow">BOOKS ENTRY / INVENTORY</p><h2 id="stock-modal-title">Manage copies</h2><p class="stock-title">${escapeHtml(book.title)} · ${escapeHtml(book.id)}</p><div class="stock-facts"><div><span>Total</span><strong>${book.total}</strong></div><div><span>Available</span><strong>${book.available}</strong></div><div><span>Borrowed</span><strong>${totals.borrowed}</strong></div><div><span>Unavailable</span><strong>${totals.unavailable}</strong></div></div><p class="stock-invariant ${totals.consistent ? "stock-ok" : "stock-bad"}">Total ${book.total} = ${book.available} available + ${totals.borrowed} borrowed + ${totals.unavailable} unavailable</p><p class="stock-breakdown">${breakdown ? `Unavailable copies: ${escapeHtml(breakdown)}.` : "No copies are currently marked damaged, lost, or under repair."}</p><form id="stock-form" class="modal-form"><input type="hidden" name="bookId" value="${escapeHtml(book.id)}"><div class="form-row"><label>Action<select name="action"><option value="mark">Mark one copy unavailable</option><option value="restore">Restore one unavailable copy</option></select></label><label>Reason<select name="reason">${Object.entries(unavailableReasons).map(([value, label]) => `<option value="${value}">${label}</option>`).join("")}</select></label></div><p class="stock-hint">Lost copies remain part of the title&apos;s total until written off. This prototype does not write off copies.</p><div class="modal-actions"><button type="button" class="library-button button-secondary modal-cancel">Cancel</button>${button("Update inventory", "button-primary", "check", "submit")}</div></form></section></div>`;
+  const canRemove = canRemoveBook(book.id);
+  if (state.modal === "remove-book") {
+    return `<div class="modal-layer"><button type="button" class="modal-backdrop" aria-label="Cancel removal"></button><section class="library-modal" role="dialog" aria-modal="true" aria-labelledby="remove-book-title"><h2 id="remove-book-title">Remove book?</h2><p class="stock-title">${escapeHtml(book.title)} · ${escapeHtml(book.id)}</p><form id="remove-book-form" class="modal-form"><label>Type ${escapeHtml(book.id)} to remove this record and all ${book.total} copies<input name="confirmation" required autocomplete="off"></label><div class="modal-actions">${button("Cancel", "button-secondary modal-cancel")}${button("Remove permanently", "button-primary", "", "submit")}</div></form></section></div>`;
+  }
+  return `<div class="modal-layer" role="presentation"><button type="button" class="modal-backdrop" aria-label="Close dialog"></button><section class="library-modal" role="dialog" aria-modal="true" aria-labelledby="stock-modal-title"><button type="button" class="modal-close" aria-label="Close dialog">${icon("x", 18)}</button><p class="eyebrow">BOOKS ENTRY / INVENTORY</p><h2 id="stock-modal-title">Manage copies</h2><p class="stock-title">${escapeHtml(book.title)} · ${escapeHtml(book.id)}</p><div class="stock-facts"><div><span>Total</span><strong>${book.total}</strong></div><div><span>Available</span><strong>${book.available}</strong></div><div><span>Borrowed</span><strong>${totals.borrowed}</strong></div><div><span>Unavailable</span><strong>${totals.unavailable}</strong></div></div><p class="stock-invariant ${totals.consistent ? "stock-ok" : "stock-bad"}">Total ${book.total} = ${book.available} available + ${totals.borrowed} borrowed + ${totals.unavailable} unavailable</p><p class="stock-breakdown">${breakdown ? `Unavailable copies: ${escapeHtml(breakdown)}.` : "No copies are currently marked damaged, lost, or under repair."}</p><form id="stock-form" class="modal-form"><input type="hidden" name="bookId" value="${escapeHtml(book.id)}"><div class="form-row"><label>Action<select name="action"><option value="mark">Mark one copy unavailable</option><option value="restore">Restore one unavailable copy</option></select></label><label>Reason<select name="reason">${Object.entries(unavailableReasons).map(([value, label]) => `<option value="${value}">${label}</option>`).join("")}</select></label></div><p class="stock-hint">Lost copies remain part of the title&apos;s total until written off. This prototype does not write off copies.</p><div class="modal-actions"><button type="button" class="library-button button-secondary modal-cancel">Cancel</button>${button("Update inventory", "button-primary", "check", "submit")}</div></form><div class="modal-actions">${button("Remove book", "button-secondary remove-book", "", "button", !canRemove)}</div>${canRemove ? "" : '<p class="stock-hint">Books with active loans or return history cannot be removed.</p>'}</section></div>`;
 }
 
 function renderModal() {
   if (!state.modal) return "";
-  if (state.modal === "stock") return renderStockModal();
+  if (state.modal === "stock" || state.modal === "remove-book") return renderStockModal();
   const book = state.modal === "book";
   return `<div class="modal-layer" role="presentation"><button type="button" class="modal-backdrop" aria-label="Close dialog"></button><section class="library-modal" role="dialog" aria-modal="true"><button type="button" class="modal-close" aria-label="Close dialog">${icon("x", 18)}</button><p class="eyebrow">${book ? "BOOKS ENTRY" : "USER ENTRY"}</p><h2>${book ? "Add a book" : "Register a student"}</h2>${book ? `<form id="book-form" class="modal-form"><label>Title<input name="title" placeholder="Book title" autofocus required></label><label>Author<input name="author" placeholder="Author name" required></label><div class="form-row"><label>ISBN (same ISBN adds copies)<input name="isbn" placeholder="978-..." required></label><label>Copies<input name="copies" type="number" min="1" value="1"></label></div><div class="form-row"><label>Category<select name="category"><option>Technology</option><option>Literature</option><option>Research</option><option>History</option></select></label><label>Shelf<input name="shelf" value="A-01"></label></div><div class="modal-actions"><button type="button" class="library-button button-secondary modal-cancel">Cancel</button>${button("Add book", "button-primary", "plus", "submit")}</div></form>` : `<form id="user-form" class="modal-form"><label>Full name<input name="name" placeholder="Full name" autofocus required></label><label>Student Number<input name="id" placeholder="19-11157-510" pattern="[0-9]{2}-[0-9]{5}-[0-9]{3}" title="Use YY-#####-###, for example 19-11157-510" required></label><label>Email<input name="email" type="email" placeholder="name@neu.edu.ph" required></label><label>College / Office<input name="department" placeholder="College or office"></label><div class="modal-actions"><button type="button" class="library-button button-secondary modal-cancel">Cancel</button>${button("Register student", "button-primary", "userPlus", "submit")}</div></form>`}</section></div>`;
 }
@@ -671,6 +680,11 @@ app.addEventListener("click", (event) => {
   if (target.matches(".add-book")) { state.modal = "book"; render(); return; }
   if (target.matches(".register-student")) { state.modal = "user"; render(); return; }
   if (target.matches(".stock-adjust")) { state.stockBookId = target.dataset.stockBook; state.modal = "stock"; render(); return; }
+  if (target.matches(".remove-book") && state.modal === "stock" && canRemoveBook(state.stockBookId)) {
+    state.modal = "remove-book";
+    render();
+    return;
+  }
   if (target.matches(".filter-option")) {
     state.bookFilter = target.dataset.filter;
     render();
@@ -760,10 +774,27 @@ app.addEventListener("submit", (event) => {
       notify(`Added ${total} ${total === 1 ? "copy" : "copies"} to ${existing.title} (${existing.id}).`);
       return;
     }
-    const book = { id: `BK-${1200 + state.books.length}`, isbn, title, author, category: String(data.get("category") ?? "Technology"), shelf: String(data.get("shelf") ?? "").trim() || "A-01", available: total, total, unavailable: emptyUnavailable(), status: "Available" };
+    const book = { id: `BK-${nextBookNumber++}`, isbn, title, author, category: String(data.get("category") ?? "Technology"), shelf: String(data.get("shelf") ?? "").trim() || "A-01", available: total, total, unavailable: emptyUnavailable(), status: "Available" };
     state.books.unshift(book);
     state.modal = "";
     notify(`${book.title} added to the catalogue.`);
+    return;
+  }
+  if (formId === "remove-book-form") {
+    const book = state.books.find((item) => item.id === state.stockBookId);
+    if (state.modal !== "remove-book" || !book) return;
+    if (!canRemoveBook(book.id)) {
+      notify("This book has active loans or return history and cannot be removed.");
+      return;
+    }
+    if (String(data.get("confirmation") ?? "").trim() !== book.id) {
+      notify(`Type ${book.id} to confirm removal.`);
+      return;
+    }
+    state.books = state.books.filter((item) => item.id !== book.id);
+    state.stockBookId = "";
+    state.modal = "";
+    notify(`${book.title} removed from the catalogue.`);
     return;
   }
   if (formId === "stock-form") {
