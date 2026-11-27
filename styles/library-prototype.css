@@ -528,6 +528,10 @@
 .stock-bad { background: var(--library-terra-wash); color: var(--library-terra); }
 .stock-breakdown { color: var(--library-terra); }
 .stock-hint { color: var(--library-muted); }
+.stock-removal { margin-top: 4px; padding: 14px; border: 1px solid var(--library-line); border-radius: 9px; background: var(--library-wash); }
+.stock-removal h3 { margin: 0 0 6px; color: var(--library-terra); font-size: 15px; }
+.stock-removal .remove-book { border-color: var(--library-terra); color: var(--library-terra); }
+.stock-removal .remove-book:hover:not(:disabled) { background: var(--library-terra-wash); }
 
 
 .library-footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 20px; padding: 0 44px 20px; color: var(--library-faint); font-family: var(--font-mono); font-size: 13px; letter-spacing: 0.6px; }
