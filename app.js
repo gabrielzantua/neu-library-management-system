@@ -179,7 +179,6 @@ const state = {
   userSearch: "",
   globalSearchQuery: "",
   bookFilter: "All",
-  filtersOpen: false,
   issueUserQuery: "",
   issueBookQuery: "",
   selectedUserId: "",
@@ -388,7 +387,7 @@ function emptyState(iconName, title, body) {
 }
 
 function renderBooksView() {
-  const search = state.bookSearch.toLowerCase();
+  const search = state.bookSearch.trim().toLowerCase();
   const statusCounts = ["Available", "Issued", "Unavailable"].reduce((counts, status) => {
     counts[status] = state.books.filter((book) => bookStatus(book) === status).length;
     return counts;
@@ -396,14 +395,14 @@ function renderBooksView() {
   const filtered = state.books.filter((book) => {
     const status = bookStatus(book);
     return (state.bookFilter === "All" || status === state.bookFilter)
-      && [book.title, book.author, book.isbn, book.category, book.shelf, status, unavailableBreakdown(book)].some((value) => value.toLowerCase().includes(search));
+      && [book.title, book.author, book.isbn, book.id, book.category, book.shelf, status, unavailableBreakdown(book)].some((value) => value.toLowerCase().includes(search));
   });
   const rows = filtered.map((book) => {
     const status = bookStatus(book);
     const unavailable = unavailableBreakdown(book);
     return `<div class="data-table-row"><div class="book-cell"><div class="book-cover cover-${book.category.toLowerCase()}">${icon("book", 17)}</div><div><strong>${escapeHtml(book.title)}</strong><span>${escapeHtml(book.author)} · ${escapeHtml(book.id)}</span></div></div><span class="mono-cell">${escapeHtml(book.isbn)}</span><span>${escapeHtml(book.category)}</span><span class="shelf-cell">${escapeHtml(book.shelf)}</span><span class="copies-cell"><span><strong>${book.available}</strong><span class="muted-inline"> / ${book.total}</span></span>${unavailable ? `<small class="stock-note">${escapeHtml(unavailable)}</small>` : ""}<button type="button" class="stock-adjust" data-stock-book="${escapeHtml(book.id)}" aria-label="Manage copies of ${escapeHtml(book.title)}">${icon("sliders", 13)}<span>Manage</span></button></span>${badge(status, bookTone(status))}</div>`;
   }).join("");
-  return `<div class="view-stack">${sectionHeading("MODULE 01 / BOOKS ENTRY", "The catalogue", "Enter and maintain the books received by the library.", button("Add a book", "button-primary add-book", "plus"))}<div class="subnav-strip"><span class="subnav-active">All books <b>${state.books.length}</b></span><span>Available <b>${statusCounts.Available}</b></span><span>Issued <b>${statusCounts.Issued}</b></span><span>Unavailable <b>${statusCounts.Unavailable}</b></span></div><div class="toolbar-row"><div class="field-with-icon">${icon("search", 17)}<input id="book-search" value="${escapeHtml(state.bookSearch)}" placeholder="Search title, author, or ISBN"></div>${button("Filters", "button-secondary filters-toggle", "sliders")}</div>${state.filtersOpen ? `<div class="filter-menu" role="group" aria-label="Book filters">${["All", "Available", "Issued", "Unavailable"].map((option) => `<button type="button" class="filter-option ${state.bookFilter === option ? "filter-option-active" : ""}" data-filter="${option}">${option}</button>`).join("")}</div>` : ""}<section class="paper-card table-card"><div class="table-label"><span>BOOK RECORDS</span><span>${filtered.length} of ${state.books.length} titles</span></div><div class="data-table"><div class="data-table-header"><span>Book</span><span>ISBN</span><span>Category</span><span>Shelf</span><span>Copies</span><span>Status</span></div>${rows}</div>${filtered.length === 0 ? emptyState("book", "No books found", "Try a different title, author, ISBN, or filter.") : ""}</section></div>`;
+  return `<div class="view-stack">${sectionHeading("MODULE 01 / BOOKS ENTRY", "The catalogue", "Enter and maintain the books received by the library.", button("Add a book", "button-primary add-book", "plus"))}<div class="subnav-strip" role="group" aria-label="Book filters">${["All", "Available", "Issued", "Unavailable"].map((status) => `<button type="button" class="filter-option" data-filter="${status}" aria-pressed="${state.bookFilter === status}">${status === "All" ? "All books" : status} <b>${status === "All" ? state.books.length : statusCounts[status]}</b></button>`).join("")}</div><div class="toolbar-row"><div class="field-with-icon">${icon("search", 17)}<input id="book-search" value="${escapeHtml(state.bookSearch)}" placeholder="Search title, author, ISBN, or book ID"></div></div><section class="paper-card table-card"><div class="table-label"><span>BOOK RECORDS</span><span>${filtered.length} of ${state.books.length} titles</span></div><div class="data-table"><div class="data-table-header"><span>Book</span><span>ISBN</span><span>Category</span><span>Shelf</span><span>Copies</span><span>Status</span></div>${rows}</div>${filtered.length === 0 ? emptyState("book", "No books found", "Try a different title, author, ISBN, book ID, or filter.") : ""}</section></div>`;
 }
 
 function renderUsersView() {
@@ -417,8 +416,8 @@ function renderIssueView() {
   const selectedUser = state.users.find((user) => user.id === state.selectedUserId);
   const selectedBook = state.books.find((book) => book.id === state.selectedBookId);
   const userMatches = state.users.filter((user) => [user.name, user.id, user.email].some((value) => value.toLowerCase().includes(state.issueUserQuery.toLowerCase()))).slice(0, 3);
-  const bookMatches = state.books.filter((book) => book.available > 0 && [book.title, book.author, book.isbn].some((value) => value.toLowerCase().includes(state.issueBookQuery.toLowerCase()))).slice(0, 3);
-  const unavailableMatches = state.books.filter((book) => book.available < 1 && [book.title, book.author, book.isbn].some((value) => value.toLowerCase().includes(state.issueBookQuery.toLowerCase()))).slice(0, Math.max(0, 3 - bookMatches.length));
+  const bookMatches = state.books.filter((book) => book.available > 0 && [book.title, book.author, book.isbn, book.id].some((value) => value.toLowerCase().includes(state.issueBookQuery.toLowerCase()))).slice(0, 3);
+  const unavailableMatches = state.books.filter((book) => book.available < 1 && [book.title, book.author, book.isbn, book.id].some((value) => value.toLowerCase().includes(state.issueBookQuery.toLowerCase()))).slice(0, Math.max(0, 3 - bookMatches.length));
   const noBooksAvailable = state.books.length > 0 && !state.books.some((book) => book.available > 0);
   const nextReturn = state.issuedBooks.map((loan) => ({ loan, book: state.books.find((book) => book.id === loan.bookId) })).filter((item) => item.book).sort((a, b) => a.loan.dueAt.localeCompare(b.loan.dueAt))[0];
   const nextReturnOverdueDays = nextReturn?.loan.dueAt ? lateDays(nextReturn.loan.dueAt, dateInputValue()) : 0;
@@ -438,7 +437,7 @@ function renderIssueView() {
     return `<button type="button" class="match-book" disabled><div class="book-mini">${icon("book", 15)}</div><span><strong>${escapeHtml(book.title)}</strong><small>${escapeHtml(detail)}${dueAt ? ` · Return due ${escapeHtml(dateLabel(dueAt))}${overdueDays ? ` · ${daysLabel(overdueDays)} overdue` : ""}` : ""}</small></span>${icon("return", 15)}</button>`;
   }).join("");
   const selectedBookUnavailable = selectedBook ? unavailableBreakdown(selectedBook) : "";
-  const bookPanel = selectedBook ? `<div class="selected-book"><div class="book-cover cover-${selectedBook.category.toLowerCase()}">${icon("book", 22)}</div><div><strong>${escapeHtml(selectedBook.title)}</strong><span>${escapeHtml(selectedBook.author)} · Shelf ${escapeHtml(selectedBook.shelf)}</span>${badge(`${selectedBook.available} copy available`, "sage")}${selectedBookUnavailable ? `<span class="stock-note">${escapeHtml(selectedBookUnavailable)}</span>` : ""}</div></div>` : `<div class="field-with-icon field-large">${icon("search", 18)}<input id="issue-book-search" value="${escapeHtml(state.issueBookQuery)}" placeholder="Search title, author, or ISBN"></div>${noBooksAvailable ? `<div class="notice-banner" role="status">${iconBox("book", "gold")}<div><strong>No books are available to issue</strong><span>${nextReturn?.loan.dueAt ? `Next return due: ${escapeHtml(nextReturn.book.title)} on ${escapeHtml(dateLabel(nextReturn.loan.dueAt))}${nextReturnOverdueDays ? ` · ${daysLabel(nextReturnOverdueDays)} overdue` : ""}` : "No copies are currently borrowable. Return or restore a copy to continue."}</span></div></div>` : ""}<div class="match-list">${[...bookMatches.map((book) => `<button type="button" class="match-book" data-book-id="${escapeHtml(book.id)}"><div class="book-mini">${icon("book", 15)}</div><span><strong>${escapeHtml(book.title)}</strong><small>${escapeHtml(book.author)} · ${book.available} available</small></span>${icon("arrowUpRight", 15)}</button>`), unavailableRows].join("") || emptyState("book", "No matching books", "Try a different title, author, or ISBN.")}</div>`;
+  const bookPanel = selectedBook ? `<div class="selected-book"><div class="book-cover cover-${selectedBook.category.toLowerCase()}">${icon("book", 22)}</div><div><strong>${escapeHtml(selectedBook.title)}</strong><span>${escapeHtml(selectedBook.author)} · Shelf ${escapeHtml(selectedBook.shelf)}</span>${badge(`${selectedBook.available} copy available`, "sage")}${selectedBookUnavailable ? `<span class="stock-note">${escapeHtml(selectedBookUnavailable)}</span>` : ""}</div></div>` : `<div class="field-with-icon field-large">${icon("search", 18)}<input id="issue-book-search" value="${escapeHtml(state.issueBookQuery)}" placeholder="Search title, author, ISBN, or book ID"></div>${noBooksAvailable ? `<div class="notice-banner" role="status">${iconBox("book", "gold")}<div><strong>No books are available to issue</strong><span>${nextReturn?.loan.dueAt ? `Next return due: ${escapeHtml(nextReturn.book.title)} on ${escapeHtml(dateLabel(nextReturn.loan.dueAt))}${nextReturnOverdueDays ? ` · ${daysLabel(nextReturnOverdueDays)} overdue` : ""}` : "No copies are currently borrowable. Return or restore a copy to continue."}</span></div></div>` : ""}<div class="match-list">${[...bookMatches.map((book) => `<button type="button" class="match-book" data-book-id="${escapeHtml(book.id)}"><div class="book-mini">${icon("book", 15)}</div><span><strong>${escapeHtml(book.title)}</strong><small>${escapeHtml(book.author)} · ${book.available} available</small></span>${icon("arrowUpRight", 15)}</button>`), unavailableRows].join("") || emptyState("book", "No matching books", "Try a different title, author, ISBN, or book ID.")}</div>`;
   const issuePolicyBanner = `<div class="policy-banner" role="note">${iconBox("users", "gold")}<div><strong>One active loan per student</strong><span>Return the current book before borrowing another. The ${loanPolicy.defaultLoanDays}-day default loan period is a prototype setting and can be adjusted before confirming the issue.</span></div></div>`;
   return `<div class="view-stack">${sectionHeading("MODULE 03 / ISSUE OF BOOKS", "Issue a book", "Issue a book to a registered student based on availability and enter its issue and due dates.")}<div class="notice-banner issue-guide">${iconBox("book", "blue")}<div><strong>How to issue a book</strong><span>1. Select a student. 2. Select an available book. 3. Enter the issue date and due date. 4. Confirm issue.</span></div></div>${issuePolicyBanner}<div class="stepper"><div class="step step-done"><span>1</span><div><strong>Find a student</strong><small>Who is borrowing?</small></div></div><div class="step-line"></div><div class="step ${selectedUser ? "step-done" : "step-current"}"><span>2</span><div><strong>Choose a book</strong><small>What is available?</small></div></div><div class="step-line"></div><div class="step ${selectedUser && selectedBook ? "step-current" : ""}"><span>3</span><div><strong>Confirm issue</strong><small>Record the hand-off.</small></div></div></div><div class="issue-layout"><section class="paper-card issue-card"><div class="card-heading"><div><p class="eyebrow">STUDENT</p><h2>${selectedUser ? "Student selected" : "Find a student"}</h2></div>${selectedUser ? '<button type="button" class="clear-selection" data-clear="user">Change ' + icon("x", 14) + "</button>" : ""}</div>${userPanel}${activeLoan ? `<div class="notice-banner" role="status">${iconBox("book", "gold")}<div><strong>Currently borrowed: ${escapeHtml(borrowedBook?.title ?? "Book")}</strong><span>Issued: ${escapeHtml(dateLabel(activeLoan.issuedAt))} · Due: ${escapeHtml(dateLabel(activeLoan.dueAt))}</span><span>Return this book before borrowing another.</span></div></div>` : selectedUser ? `<div class="notice-banner">${iconBox("check", "sage")}<div><strong>No active loan</strong><span>This student can borrow an available book.</span></div></div>` : ""}</section><section class="paper-card issue-card"><div class="card-heading"><div><p class="eyebrow">BOOK</p><h2>${selectedBook ? "Book selected" : "Choose a book"}</h2></div>${selectedBook ? '<button type="button" class="clear-selection" data-clear="book">Change ' + icon("x", 14) + "</button>" : ""}</div>${bookPanel}</section></div><form id="issue-form" class="paper-card issue-review ${canConfirm ? "review-ready" : ""}"><div><p class="eyebrow">ISSUE SUMMARY</p><h2>${hasActiveLoan ? "Borrowing unavailable" : canConfirm ? "Ready to hand over" : "Complete the selections above"}</h2><p>${hasActiveLoan ? "Return your borrowed book before borrowing another. Choose a different student to continue." : canConfirm && selectedUser ? `The book will be due on ${escapeHtml(dateLabel(state.dueDate))} for ${escapeHtml(selectedUser.name)}.` : "Choose a registered student and an available book to prepare the issue record."}</p></div><div class="issue-review-meta"><label><span>Issue date</span><input id="issue-date" type="date" value="${escapeHtml(state.issueDate)}" required></label><label><span>Due date</span><input id="due-date" type="date" value="${escapeHtml(state.dueDate)}" min="${escapeHtml(state.issueDate)}" required></label>${button(canConfirm ? "Confirm issue" : "Complete the form", "button-primary", "check", "submit", !canConfirm)}</div></form></div>`;
 }
@@ -612,7 +611,12 @@ function handleInput(event) {
   const input = event.target;
   if (!(input instanceof HTMLInputElement)) return;
   if (input.id === "global-search-input") { state.globalSearchQuery = input.value; focusAfterRender(input.id); }
-  if (input.id === "book-search") { state.bookSearch = input.value; focusAfterRender(input.id); }
+  if (input.id === "book-search") {
+    state.bookSearch = input.value;
+    const query = input.value.trim().toLowerCase();
+    if (state.books.some((book) => book.id.toLowerCase() === query)) state.bookFilter = "All";
+    focusAfterRender(input.id);
+  }
   if (input.id === "user-search") { state.userSearch = input.value; focusAfterRender(input.id); }
   if (input.id === "issue-user-search") { state.issueUserQuery = input.value; focusAfterRender(input.id); }
   if (input.id === "issue-book-search") { state.issueBookQuery = input.value; focusAfterRender(input.id); }
@@ -667,8 +671,12 @@ app.addEventListener("click", (event) => {
   if (target.matches(".add-book")) { state.modal = "book"; render(); return; }
   if (target.matches(".register-student")) { state.modal = "user"; render(); return; }
   if (target.matches(".stock-adjust")) { state.stockBookId = target.dataset.stockBook; state.modal = "stock"; render(); return; }
-  if (target.matches(".filters-toggle")) { state.filtersOpen = !state.filtersOpen; render(); return; }
-  if (target.matches(".filter-option")) { state.bookFilter = target.dataset.filter; render(); return; }
+  if (target.matches(".filter-option")) {
+    state.bookFilter = target.dataset.filter;
+    render();
+    app.querySelector?.('.subnav-strip [aria-pressed="true"]')?.focus();
+    return;
+  }
   if (target.matches(".loan-filter")) { state.loanFilter = target.dataset.loanFilter; render(); return; }
   if (target.matches(".modal-close, .modal-backdrop, .modal-cancel")) { state.modal = ""; state.stockBookId = ""; render(); return; }
   if (target.matches(".dismiss-toast")) { state.toast = ""; render(); return; }
