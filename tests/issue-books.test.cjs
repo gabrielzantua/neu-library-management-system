@@ -628,6 +628,49 @@ test("librarians can mark copies damaged or lost and restore them without changi
   assert.match(app.innerHTML, /No books found/);
 });
 
+test("librarians can write off only confirmed unavailable copies without changing loans or return history", () => {
+  const { app, state, submit } = loadApp("books");
+  const book = state.books.find((item) => item.id === "BK-1048");
+  const loanCount = state.issuedBooks.length;
+  const historyCount = state.returnRecords.length;
+  state.stockBookId = book.id;
+  state.modal = "stock";
+  submit("stock-form", { bookId: book.id, action: "mark", reason: "damaged" });
+  const before = state.books.find((item) => item.id === book.id);
+  assert.equal(before.total, 3);
+  assert.equal(before.available, 1);
+  assert.equal(before.unavailable.damaged, 1);
+
+  submit("write-off-form", { reason: "damaged" });
+  assert.equal(state.books.find((item) => item.id === book.id).total, 3);
+  assert.match(state.toast, /Confirm that you want/);
+  assert.match(app.innerHTML, /Write off unavailable copy/);
+
+  submit("write-off-form", { reason: "repair", confirm: "on" });
+  assert.equal(state.books.find((item) => item.id === book.id).total, 3);
+  submit("write-off-form", { reason: "damaged", confirm: "on" });
+  const after = state.books.find((item) => item.id === book.id);
+  assert.equal(after.total, 2);
+  assert.equal(after.available, 1);
+  assert.equal(after.unavailable.damaged, 0);
+  assert.equal(after.status, "Available");
+  assert.equal(state.issuedBooks.length, loanCount);
+  assert.equal(state.returnRecords.length, historyCount);
+  assertInventoryInvariant(state);
+});
+
+test("whole-title removal requires every copy to be unavailable", () => {
+  const { app, state, submit, click } = loadApp("books");
+  submit("book-form", { title: "Write-off Test", author: "Test Author", isbn: "write-off-test", copies: "2" });
+  const book = state.books[0];
+  click(".stock-adjust", { stockBook: book.id });
+  assert.match(app.innerHTML, /class="library-button button-secondary remove-book" disabled/);
+  submit("stock-form", { bookId: book.id, action: "mark", reason: "damaged" });
+  submit("stock-form", { bookId: book.id, action: "mark", reason: "repair" });
+  assert.match(app.innerHTML, /class="library-button button-secondary remove-book"/);
+  assert.doesNotMatch(app.innerHTML, /class="library-button button-secondary remove-book" disabled/);
+});
+
 test("all-unavailable titles appear as Unavailable and cannot be issued", () => {
   const { app, state, submit, navigate, click, render } = loadApp("books");
   const book = state.books.find((item) => item.id === "BK-1051");

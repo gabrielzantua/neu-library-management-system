@@ -532,6 +532,8 @@
 .stock-removal h3 { margin: 0 0 6px; color: var(--library-terra); font-size: 15px; }
 .stock-removal .remove-book { border-color: var(--library-terra); color: var(--library-terra); }
 .stock-removal .remove-book:hover:not(:disabled) { background: var(--library-terra-wash); }
+.write-off-confirm { display: flex !important; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 8px !important; color: var(--library-ink) !important; font-family: var(--font-body) !important; font-size: 14px !important; letter-spacing: 0 !important; text-transform: none !important; }
+.write-off-confirm input { width: 16px; min-height: 16px; margin: 2px 0 0; }
 
 
 .library-footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 20px; padding: 0 44px 20px; color: var(--library-faint); font-family: var(--font-mono); font-size: 13px; letter-spacing: 0.6px; }

@@ -280,6 +280,26 @@ function restoreUnavailableCopy(bookId, reason) {
   return { ok: true, book: updated, message: `1 ${unavailableReasons[reason].toLowerCase()} copy of ${book.title} restored to available stock.` };
 }
 
+function writeOffUnavailableCopy(bookId, reason) {
+  const book = state.books.find((item) => item.id === bookId);
+  if (!book) return { ok: false, message: "Book not found." };
+  if (!Object.prototype.hasOwnProperty.call(unavailableReasons, reason)) return { ok: false, message: "Choose a valid unavailable reason." };
+  if (!inventoryTotals(book).consistent) return { ok: false, message: "Cannot adjust copies: the inventory record is inconsistent." };
+  if (!Number.isInteger(book.unavailable?.[reason]) || book.unavailable[reason] < 1) {
+    return { ok: false, message: `No copies are recorded as ${unavailableReasons[reason].toLowerCase()}.` };
+  }
+  const updated = syncBookStatus({
+    ...book,
+    total: book.total - 1,
+    unavailable: { ...book.unavailable, [reason]: book.unavailable[reason] - 1 },
+  });
+  if (updated.total < 0 || !inventoryTotals(updated).consistent) {
+    return { ok: false, message: "Cannot write off a copy without breaking the inventory total." };
+  }
+  state.books = state.books.map((item) => item.id === book.id ? updated : item);
+  return { ok: true, book: updated, message: `1 ${unavailableReasons[reason].toLowerCase()} copy of ${book.title} written off.` };
+}
+
 function normalizeSearchText(value) {
   return String(value ?? "").normalize("NFKD").replace(/\p{M}/gu, "").toLocaleLowerCase("en-PH").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 }
@@ -509,7 +529,11 @@ function renderReturnView() {
 }
 
 function canRemoveBook(bookId) {
-  return !activeLoanCount(bookId) && !state.returnRecords.some((record) => record.bookId === bookId);
+  const book = state.books.find((item) => item.id === bookId);
+  const totals = book && inventoryTotals(book);
+  return Boolean(book && book.total > 0 && book.available === 0 && totals.consistent
+    && totals.unavailable === book.total && !activeLoanCount(bookId)
+    && !state.returnRecords.some((record) => record.bookId === bookId));
 }
 
 function renderStockModal() {
@@ -521,7 +545,7 @@ function renderStockModal() {
   if (state.modal === "remove-book") {
     return `<div class="modal-layer"><button type="button" class="modal-backdrop" aria-label="Cancel removal"></button><section class="library-modal" role="dialog" aria-modal="true" aria-labelledby="remove-book-title"><h2 id="remove-book-title">Remove book?</h2><p class="stock-title">${escapeHtml(book.title)} · ${escapeHtml(book.id)}</p><form id="remove-book-form" class="modal-form"><label>Type ${escapeHtml(book.id)} to remove this record and all ${book.total} copies<input name="confirmation" required autocomplete="off"></label><div class="modal-actions">${button("Cancel", "button-secondary modal-cancel")}${button("Remove permanently", "button-primary", "", "submit")}</div></form></section></div>`;
   }
-  return `<div class="modal-layer" role="presentation"><button type="button" class="modal-backdrop" aria-label="Close dialog"></button><section class="library-modal" role="dialog" aria-modal="true" aria-labelledby="stock-modal-title"><button type="button" class="modal-close" aria-label="Close dialog">${icon("x", 18)}</button><p class="eyebrow">BOOKS ENTRY / INVENTORY</p><h2 id="stock-modal-title">Manage copies</h2><p class="stock-title">${escapeHtml(book.title)} · ${escapeHtml(book.id)}</p><div class="stock-facts"><div><span>Total</span><strong>${book.total}</strong></div><div><span>Available</span><strong>${book.available}</strong></div><div><span>Borrowed</span><strong>${totals.borrowed}</strong></div><div><span>Unavailable</span><strong>${totals.unavailable}</strong></div></div><p class="stock-invariant ${totals.consistent ? "stock-ok" : "stock-bad"}">Total ${book.total} = ${book.available} available + ${totals.borrowed} borrowed + ${totals.unavailable} unavailable</p><p class="stock-breakdown">${breakdown ? `Unavailable copies: ${escapeHtml(breakdown)}.` : "No copies are currently marked damaged, lost, or under repair."}</p><form id="stock-form" class="modal-form"><input type="hidden" name="bookId" value="${escapeHtml(book.id)}"><div class="form-row"><label>Action<select name="action"><option value="mark">Mark one copy unavailable</option><option value="restore">Restore one unavailable copy</option></select></label><label>Reason<select name="reason">${Object.entries(unavailableReasons).map(([value, label]) => `<option value="${value}">${label}</option>`).join("")}</select></label></div><p class="stock-hint">Lost copies remain part of the title&apos;s total until written off. This prototype does not write off copies.</p><div class="modal-actions"><button type="button" class="library-button button-secondary modal-cancel">Cancel</button>${button("Update inventory", "button-primary", "check", "submit")}</div><section class="stock-removal" aria-labelledby="stock-removal-title"><h3 id="stock-removal-title">Remove this book</h3><p class="stock-hint">${canRemove ? "Removes this catalogue record and all its copies after confirmation." : "Books with active loans or return history cannot be removed."}</p>${button("Remove book", "button-secondary remove-book", "", "button", !canRemove)}</section></form></section></div>`;
+  return `<div class="modal-layer" role="presentation"><button type="button" class="modal-backdrop" aria-label="Close dialog"></button><section class="library-modal" role="dialog" aria-modal="true" aria-labelledby="stock-modal-title"><button type="button" class="modal-close" aria-label="Close dialog">${icon("x", 18)}</button><p class="eyebrow">BOOKS ENTRY / INVENTORY</p><h2 id="stock-modal-title">Manage copies</h2><p class="stock-title">${escapeHtml(book.title)} · ${escapeHtml(book.id)}</p><div class="stock-facts"><div><span>Total</span><strong>${book.total}</strong></div><div><span>Available</span><strong>${book.available}</strong></div><div><span>Borrowed</span><strong>${totals.borrowed}</strong></div><div><span>Unavailable</span><strong>${totals.unavailable}</strong></div></div><p class="stock-invariant ${totals.consistent ? "stock-ok" : "stock-bad"}">Total ${book.total} = ${book.available} available + ${totals.borrowed} borrowed + ${totals.unavailable} unavailable</p><p class="stock-breakdown">${breakdown ? `Unavailable copies: ${escapeHtml(breakdown)}.` : "No copies are currently marked damaged, lost, or under repair."}</p><form id="stock-form" class="modal-form"><input type="hidden" name="bookId" value="${escapeHtml(book.id)}"><div class="form-row"><label>Action<select name="action"><option value="mark">Mark one copy unavailable</option><option value="restore">Restore one unavailable copy</option></select></label><label>Reason<select name="reason">${Object.entries(unavailableReasons).map(([value, label]) => `<option value="${value}">${label}</option>`).join("")}</select></label></div><p class="stock-hint">Lost copies remain part of the title&apos;s total until written off.</p><div class="modal-actions"><button type="button" class="library-button button-secondary modal-cancel">Cancel</button>${button("Update inventory", "button-primary", "check", "submit")}</div></form><section class="stock-removal" aria-labelledby="write-off-title"><h3 id="write-off-title">Write off unavailable copy</h3><form id="write-off-form" class="modal-form"><label>Unavailable reason<select name="reason">${Object.entries(unavailableReasons).map(([value, label]) => `<option value="${value}"${book.unavailable?.[value] > 0 ? "" : " disabled"}>${label} (${book.unavailable?.[value] ?? 0})</option>`).join("")}</select></label><label class="write-off-confirm"><input name="confirm" type="checkbox" required> I understand this permanently removes one unavailable copy from the title total.</label><div class="modal-actions">${button("Write off one copy", "button-secondary", "", "submit", totals.unavailable === 0)}</div></form></section><section class="stock-removal" aria-labelledby="stock-removal-title"><h3 id="stock-removal-title">Remove this book</h3><p class="stock-hint">${canRemove ? "Removes this unavailable title and its copies after confirmation." : "All copies must be unavailable, with no active loans or return history. Write off copies individually above."}</p>${button("Remove book", "button-secondary remove-book", "", "button", !canRemove)}</section></section></div>`;
 }
 
 function renderModal() {
@@ -807,6 +831,16 @@ app.addEventListener("submit", (event) => {
         ? markCopyUnavailable(bookId, reason)
         : { ok: false, message: "Choose a valid inventory action." };
     notify(result.message);
+    return;
+  }
+  if (formId === "write-off-form") {
+    if (data.get("confirm") !== "on") {
+      notify("Confirm that you want to permanently write off this copy.");
+      return;
+    }
+    const result = writeOffUnavailableCopy(state.stockBookId, String(data.get("reason") ?? ""));
+    notify(result.message);
+    render();
     return;
   }
   if (formId === "user-form") {

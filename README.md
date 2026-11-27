@@ -38,10 +38,12 @@ Total copies = Available copies + Active borrowed copies + Other unavailable cop
 
 `Other unavailable copies` are explicitly recorded as **Damaged**, **Lost**, or
 **Under repair**. Use **Manage** in the Books Entry copies column to mark one
-available copy unavailable or restore one unavailable copy. The action is
-blocked when it would make any quantity negative or break the total. Unavailable
-copies cannot be issued. Status and counts are recalculated after every issue,
-return, and inventory adjustment.
+available copy unavailable, restore one unavailable copy, or write off one
+unavailable copy. Writing off requires confirmation and reduces both the title's
+total and the selected unavailable reason count. The action is blocked when it
+would make any quantity negative or break the total. Unavailable copies cannot
+be issued. Status and counts are recalculated after every issue, return, and
+inventory adjustment.
 
 Title status is recalculated from the copy counts, so labels stay accurate after
 every issue, return, and inventory adjustment:
@@ -52,9 +54,8 @@ every issue, return, and inventory adjustment:
   or under repair. This also applies when other copies are on loan, so a mixed
   record is never mislabelled as fully Issued.
 
-**Lost copies remain part of a title's total until they are formally written
-off.** This prototype does not implement write-off or replacement accounting, so
-lost copies stay in the total and in the unavailable count.
+**Lost copies remain part of a title's total until formally written off.** This
+prototype does not implement replacement accounting after a write-off.
 
 ### Seed-data reconciliation
 
