@@ -24,6 +24,12 @@ for the current tab session.
 
 ## Inventory accounting
 
+To receive more copies of an existing edition, open **Add a book**, enter its
+ISBN and the number of copies delivered, then submit. Matching ISBNs ignore
+spaces and hyphens. The delivery increases both total and available copies on
+the existing record, preserving its book ID, details, and loans. An ISBN that
+does not match an existing record creates a new title.
+
 Every title follows this invariant:
 
 ```

@@ -519,7 +519,7 @@ function renderModal() {
   if (!state.modal) return "";
   if (state.modal === "stock") return renderStockModal();
   const book = state.modal === "book";
-  return `<div class="modal-layer" role="presentation"><button type="button" class="modal-backdrop" aria-label="Close dialog"></button><section class="library-modal" role="dialog" aria-modal="true"><button type="button" class="modal-close" aria-label="Close dialog">${icon("x", 18)}</button><p class="eyebrow">${book ? "BOOKS ENTRY" : "USER ENTRY"}</p><h2>${book ? "Add a book" : "Register a student"}</h2>${book ? `<form id="book-form" class="modal-form"><label>Title<input name="title" placeholder="Book title" autofocus required></label><label>Author<input name="author" placeholder="Author name" required></label><div class="form-row"><label>ISBN<input name="isbn" placeholder="978-..." required></label><label>Copies<input name="copies" type="number" min="1" value="1"></label></div><div class="form-row"><label>Category<select name="category"><option>Technology</option><option>Literature</option><option>Research</option><option>History</option></select></label><label>Shelf<input name="shelf" value="A-01"></label></div><div class="modal-actions"><button type="button" class="library-button button-secondary modal-cancel">Cancel</button>${button("Add book", "button-primary", "plus", "submit")}</div></form>` : `<form id="user-form" class="modal-form"><label>Full name<input name="name" placeholder="Full name" autofocus required></label><label>Student Number<input name="id" placeholder="19-11157-510" pattern="[0-9]{2}-[0-9]{5}-[0-9]{3}" title="Use YY-#####-###, for example 19-11157-510" required></label><label>Email<input name="email" type="email" placeholder="name@neu.edu.ph" required></label><label>College / Office<input name="department" placeholder="College or office"></label><div class="modal-actions"><button type="button" class="library-button button-secondary modal-cancel">Cancel</button>${button("Register student", "button-primary", "userPlus", "submit")}</div></form>`}</section></div>`;
+  return `<div class="modal-layer" role="presentation"><button type="button" class="modal-backdrop" aria-label="Close dialog"></button><section class="library-modal" role="dialog" aria-modal="true"><button type="button" class="modal-close" aria-label="Close dialog">${icon("x", 18)}</button><p class="eyebrow">${book ? "BOOKS ENTRY" : "USER ENTRY"}</p><h2>${book ? "Add a book" : "Register a student"}</h2>${book ? `<form id="book-form" class="modal-form"><label>Title<input name="title" placeholder="Book title" autofocus required></label><label>Author<input name="author" placeholder="Author name" required></label><div class="form-row"><label>ISBN (same ISBN adds copies)<input name="isbn" placeholder="978-..." required></label><label>Copies<input name="copies" type="number" min="1" value="1"></label></div><div class="form-row"><label>Category<select name="category"><option>Technology</option><option>Literature</option><option>Research</option><option>History</option></select></label><label>Shelf<input name="shelf" value="A-01"></label></div><div class="modal-actions"><button type="button" class="library-button button-secondary modal-cancel">Cancel</button>${button("Add book", "button-primary", "plus", "submit")}</div></form>` : `<form id="user-form" class="modal-form"><label>Full name<input name="name" placeholder="Full name" autofocus required></label><label>Student Number<input name="id" placeholder="19-11157-510" pattern="[0-9]{2}-[0-9]{5}-[0-9]{3}" title="Use YY-#####-###, for example 19-11157-510" required></label><label>Email<input name="email" type="email" placeholder="name@neu.edu.ph" required></label><label>College / Office<input name="department" placeholder="College or office"></label><div class="modal-actions"><button type="button" class="library-button button-secondary modal-cancel">Cancel</button>${button("Register student", "button-primary", "userPlus", "submit")}</div></form>`}</section></div>`;
 }
 
 function renderToast() {
@@ -730,7 +730,36 @@ app.addEventListener("submit", (event) => {
     const author = String(data.get("author") ?? "").trim();
     const isbn = String(data.get("isbn") ?? "").trim();
     if (!title || !author || !isbn) return;
-    const total = Math.max(1, Number(data.get("copies")) || 1);
+    const total = Number(String(data.get("copies") ?? "").trim() || "1");
+    if (!Number.isSafeInteger(total) || total < 1) {
+      notify("Enter a positive whole number of copies.");
+      return;
+    }
+
+    const isbnKey = (value) => value.replace(/[\s-]+/g, "").toLowerCase();
+    const key = isbnKey(isbn);
+    if (!key) {
+      notify("Enter a valid ISBN.");
+      return;
+    }
+    const matches = state.books.filter((book) => isbnKey(book.isbn) === key);
+    if (matches.length > 1) {
+      notify("Multiple catalogue records have this ISBN. Copies were not added.");
+      return;
+    }
+    const existing = matches[0];
+    if (existing) {
+      if (!inventoryTotals(existing).consistent || !Number.isSafeInteger(existing.total + total)) {
+        notify("Cannot add copies to this inventory record.");
+        return;
+      }
+      state.books = state.books.map((book) => book.id === existing.id
+        ? syncBookStatus({ ...book, available: book.available + total, total: book.total + total })
+        : book);
+      state.modal = "";
+      notify(`Added ${total} ${total === 1 ? "copy" : "copies"} to ${existing.title} (${existing.id}).`);
+      return;
+    }
     const book = { id: `BK-${1200 + state.books.length}`, isbn, title, author, category: String(data.get("category") ?? "Technology"), shelf: String(data.get("shelf") ?? "").trim() || "A-01", available: total, total, unavailable: emptyUnavailable(), status: "Available" };
     state.books.unshift(book);
     state.modal = "";
